@@ -18,6 +18,8 @@
     <button id="btn-extract" title="Extract" disabled>&#128229; Extract All</button>
     <div class="toolbar-sep"></div>
     <button id="btn-test" title="Test Integrity" disabled>&#9989; Test</button>
+    <div class="toolbar-sep"></div>
+    <button id="btn-clean" title="Clean macOS" disabled>&#128736; Clean macOS</button>
   </div>
 
   <div id="path-bar"><span id="archive-path">No archive open</span></div>
@@ -61,6 +63,14 @@
     let selectedPaths = new Set();
     let lastClickedIdx = -1;
     let collapsedPaths = new Set();
+    let dirty = false;
+
+    function setDirty(val) {
+      dirty = val;
+      const title = archivePath ? path.basename(archivePath) : "ArchiveSphinx";
+      document.title = dirty ? "● " + title : title;
+      ipcRenderer.invoke("set-dirty", dirty);
+    }
 
     function formatBytes(b) {
       if (b === 0) return "0 B";
@@ -89,6 +99,10 @@
       zip.getEntries().forEach((e) => { e.header.flags &= ~0x08; });
       zip.writeZip(archivePath);
       zip = new AdmZip(archivePath);
+    }
+
+    function refreshZip() {
+      zip = new AdmZip(zip.toBuffer());
     }
 
     // Load column order from settings
@@ -128,6 +142,7 @@
         if (columnWidths[colId]) th.style.width = columnWidths[colId] + "%";
         th.addEventListener("click", (e) => {
           if (e.target.classList.contains("col-resize")) return;
+          if (colId === "attributes") return;
           if (sortCol === colId) sortAsc = !sortAsc;
           else { sortCol = colId; sortAsc = true; }
           render();
@@ -214,8 +229,23 @@
     function buildVisibleList() {
       if (!zip) return [];
       const entries = zip.getEntries();
+      // Ensure implicit parent directories exist in the children map
+      const children = new Map();
+      const knownDirs = new Set(entries.filter((e) => e.isDirectory).map((e) => e.entryName));
+      entries.forEach((e) => {
+        // Synthesize missing parent directories
+        const parts = e.entryName.replace(/\/$/, "").split("/");
+        for (let i = 1; i < parts.length; i++) {
+          const implicitDir = parts.slice(0, i).join("/") + "/";
+          if (!knownDirs.has(implicitDir)) {
+            knownDirs.add(implicitDir);
+            const parent = i === 1 ? "" : parts.slice(0, i - 1).join("/") + "/";
+            if (!children.has(parent)) children.set(parent, []);
+            children.get(parent).push({ entryName: implicitDir, isDirectory: true, header: {}, attr: 0, _synthetic: true });
+          }
+        }
+      });
       // Group entries by parent folder
-      const children = new Map(); // parent path -> entries
       entries.forEach((e) => {
         const parent = getParent(e.entryName);
         if (!children.has(parent)) children.set(parent, []);
@@ -253,7 +283,8 @@
         tr.draggable = true;
         if (selectedPaths.has(entry.entryName)) tr.classList.add("selected");
         tr.addEventListener("dragstart", (e) => {
-          e.dataTransfer.setData("application/x-archivesphinx-entry", entry.entryName);
+          const paths = selectedPaths.has(entry.entryName) ? [...selectedPaths] : [entry.entryName];
+          e.dataTransfer.setData("application/x-archivesphinx-entry", JSON.stringify(paths));
           e.dataTransfer.effectAllowed = "move";
         });
         tr.addEventListener("dragover", (e) => {
@@ -270,19 +301,23 @@
         tr.addEventListener("dragleave", () => tr.classList.remove("drop-target"));
         tr.addEventListener("drop", (e) => {
           tr.classList.remove("drop-target");
-          const srcPath = e.dataTransfer.getData("application/x-archivesphinx-entry");
-          if (srcPath) {
+          const raw = e.dataTransfer.getData("application/x-archivesphinx-entry");
+          if (raw) {
             e.preventDefault();
             e.stopPropagation();
             const destFolder = entry.isDirectory ? entry.entryName : getParent(entry.entryName);
-            moveEntry(srcPath, destFolder);
+            JSON.parse(raw).forEach((srcPath) => moveEntry(srcPath, destFolder, true));
+            refreshZip();
+            selectedPaths.clear();
+            setDirty(true);
+            render();
           } else if (e.dataTransfer.files.length) {
             e.preventDefault();
             e.stopPropagation();
             if (!zip || !archivePath) return;
             const targetFolder = entry.isDirectory ? entry.entryName : getParent(entry.entryName);
             [...e.dataTransfer.files].forEach((file) => addPathToZip(webUtils.getPathForFile(file), targetFolder));
-            saveZip();
+            setDirty(true);
             render();
           }
         });
@@ -319,7 +354,7 @@
               td.appendChild(toggle);
             } else {
               const spacer = document.createElement("span");
-              spacer.textContent = "   ";
+              spacer.className = "toggle-spacer";
               td.appendChild(spacer);
             }
             const icon = document.createTextNode(entry.isDirectory ? "📁 " : "📄 ");
@@ -363,26 +398,44 @@
       return parts.length ? parts.join("/") + "/" : "";
     }
 
-    function moveEntry(srcPath, destFolder) {
+    function moveEntry(srcPath, destFolder, batch) {
       if (!zip) return;
       if (srcPath === destFolder) return;
       if (destFolder.startsWith(srcPath)) return;
       if (getParent(srcPath) === destFolder) return;
       const baseName = path.basename(srcPath.replace(/\/$/, ""));
       const isDir = srcPath.endsWith("/");
+      const srcParent = getParent(srcPath);
       if (isDir) {
         const newBase = destFolder + baseName + "/";
         zip.getEntries()
           .filter((e) => e.entryName.startsWith(srcPath))
           .forEach((e) => { e.entryName = newBase + e.entryName.slice(srcPath.length); });
+        // Move matching __MACOSX entries
+        const macSrc = "__MACOSX/" + srcPath;
+        const macDest = "__MACOSX/" + destFolder + baseName + "/";
+        zip.getEntries()
+          .filter((e) => e.entryName.startsWith(macSrc))
+          .forEach((e) => { e.entryName = macDest + e.entryName.slice(macSrc.length); });
+        // Move ._folder resource fork
+        const forkSrc = "__MACOSX/" + srcParent + "._" + baseName;
+        const forkEntry = zip.getEntries().find((e) => e.entryName === forkSrc);
+        if (forkEntry) forkEntry.entryName = "__MACOSX/" + destFolder + "._" + baseName;
       } else {
-        const entry = zip.getEntry(srcPath);
+        const entry = zip.getEntries().find((e) => e.entryName === srcPath);
         if (!entry) return;
         entry.entryName = destFolder + baseName;
+        // Move matching __MACOSX resource fork
+        const forkSrc = "__MACOSX/" + srcParent + "._" + baseName;
+        const forkEntry = zip.getEntries().find((e) => e.entryName === forkSrc);
+        if (forkEntry) forkEntry.entryName = "__MACOSX/" + destFolder + "._" + baseName;
       }
-      selectedPaths.clear();
-      saveZip();
-      render();
+      if (!batch) {
+        refreshZip();
+        selectedPaths.clear();
+        setDirty(true);
+        render();
+      }
     }
 
     function startRename(entry, tr) {
@@ -422,7 +475,8 @@
           }
           selectedPaths.delete(oldPath);
           selectedPaths.add(newPath);
-          saveZip();
+          refreshZip();
+          setDirty(true);
         }
         render();
       };
@@ -451,12 +505,13 @@
       const hasArchive = !!zip;
       const hasSelection = selectedPaths.size > 0;
       const selectionIsFolder = hasSelection && [...selectedPaths].every((p) => p.endsWith("/"));
-      document.getElementById("btn-save").disabled = !hasArchive;
+      document.getElementById("btn-save").disabled = !hasArchive || !dirty;
       document.getElementById("btn-add").disabled = !hasArchive;
       document.getElementById("btn-folder").disabled = !hasArchive || (hasSelection && !selectionIsFolder);
       document.getElementById("btn-delete").disabled = !hasArchive || !hasSelection;
       document.getElementById("btn-extract").disabled = !hasArchive;
       document.getElementById("btn-test").disabled = !hasArchive;
+      document.getElementById("btn-clean").disabled = !hasArchive;
       document.getElementById("btn-extract").textContent = hasSelection ? "📥 Extract Selected" : "📥 Extract All";
     }
 
@@ -475,6 +530,8 @@
       zip = new AdmZip();
       saveZip();
       selectedPaths.clear();
+      ipcRenderer.invoke("register-open-file", archivePath);
+      setDirty(false);
       updatePathBar();
       render();
     }
@@ -495,6 +552,7 @@
         zip = new AdmZip(archivePath);
         selectedPaths.clear();
         ipcRenderer.invoke("register-open-file", archivePath);
+        setDirty(false);
         updatePathBar();
         render();
       }
@@ -503,6 +561,7 @@
     function saveArchive() {
       if (!zip || !archivePath) return;
       saveZip();
+      setDirty(false);
       render();
     }
 
@@ -519,7 +578,7 @@
         const data = fs.readFileSync(filePath);
         zip.addFile(folder + name, data);
       });
-      saveZip();
+      setDirty(true);
       render();
     }
 
@@ -534,7 +593,7 @@
       }
       const newPath = parent + name + "/";
       zip.addFile(newPath, Buffer.alloc(0));
-      saveZip();
+      setDirty(true);
       selectedPaths.clear();
       selectedPaths.add(newPath);
       // Expand parent so new folder is visible
@@ -560,7 +619,7 @@
         }
       });
       selectedPaths.clear();
-      saveZip();
+      setDirty(true);
       render();
     }
 
@@ -613,6 +672,19 @@
       });
     }
 
+    function cleanMacOS() {
+      if (!zip) return;
+      const toDelete = zip.getEntries()
+        .filter((e) => e.entryName.startsWith("__MACOSX/") || e.entryName === "__MACOSX/" || path.basename(e.entryName) === ".DS_Store")
+        .map((e) => e.entryName);
+      if (toDelete.length === 0) return;
+      toDelete.forEach((p) => zip.deleteFile(p));
+      refreshZip();
+      selectedPaths.clear();
+      setDirty(true);
+      render();
+    }
+
     // Prevent Electron from navigating when files are dropped outside the tree
     document.addEventListener("dragover", (e) => {
       if (!e.target.closest("#tree-container")) e.preventDefault();
@@ -642,10 +714,14 @@
       e.dataTransfer.dropEffect = "copy";
     });
     treeContainer.addEventListener("drop", (e) => {
-      const srcPath = e.dataTransfer.getData("application/x-archivesphinx-entry");
-      if (srcPath) {
+      const raw = e.dataTransfer.getData("application/x-archivesphinx-entry");
+      if (raw) {
         e.preventDefault();
-        moveEntry(srcPath, "");
+        JSON.parse(raw).forEach((srcPath) => moveEntry(srcPath, "", true));
+        refreshZip();
+        selectedPaths.clear();
+        setDirty(true);
+        render();
         return;
       }
       if (e.dataTransfer.types.includes("application/x-archivesphinx-entry")) return;
@@ -666,7 +742,7 @@
       files.forEach((file) => {
         addPathToZip(webUtils.getPathForFile(file), targetFolder);
       });
-      saveZip();
+      setDirty(true);
       render();
     });
 
@@ -690,6 +766,7 @@
       zip = new AdmZip(archivePath);
       selectedPaths.clear();
       ipcRenderer.invoke("register-open-file", archivePath);
+      setDirty(false);
       updatePathBar();
       render();
     });
@@ -703,6 +780,7 @@
     document.getElementById("btn-delete").addEventListener("click", deleteSelected);
     document.getElementById("btn-extract").addEventListener("click", extractSelected);
     document.getElementById("btn-test").addEventListener("click", testIntegrity);
+    document.getElementById("btn-clean").addEventListener("click", cleanMacOS);
 
     // IPC from menu
     ipcRenderer.on("menu-new", newArchive);
@@ -713,9 +791,14 @@
     ipcRenderer.on("menu-delete", deleteSelected);
     ipcRenderer.on("menu-extract", extractSelected);
     ipcRenderer.on("menu-test", testIntegrity);
+    ipcRenderer.on("menu-clean", cleanMacOS);
     ipcRenderer.on("settings-updated", async () => {
       await loadColumnOrder();
       render();
+    });
+
+    ipcRenderer.on("request-save", () => {
+      saveArchive();
     });
 
     // Init

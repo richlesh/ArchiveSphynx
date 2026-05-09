@@ -47,6 +47,11 @@ ipcMain.handle("register-open-file", (_e, filePath) => {
   if (filePath) openFiles.set(filePath, win);
 });
 
+ipcMain.handle("set-dirty", (_e, isDirty) => {
+  const win = BrowserWindow.fromWebContents(_e.sender);
+  if (win) win.isDirty = isDirty;
+});
+
 ipcMain.handle("check-open-file", (_e, filePath) => {
   const existing = openFiles.get(filePath);
   if (existing && !existing.isDestroyed()) {
@@ -72,7 +77,29 @@ function createWindow() {
     }
   });
   win.loadFile("index.html");
-  win.on("close", () => {
+  win.isDirty = false;
+  win.on("close", (e) => {
+    if (win.isDirty) {
+      e.preventDefault();
+      dialog.showMessageBox(win, {
+        type: "question",
+        buttons: ["Save", "Don't Save", "Cancel"],
+        defaultId: 0,
+        cancelId: 2,
+        message: "Do you want to save changes before closing?",
+      }).then(({ response }) => {
+        if (response === 0) {
+          win.webContents.send("request-save");
+          win.isDirty = false;
+          win.close();
+        } else if (response === 1) {
+          win.isDirty = false;
+          win.close();
+        }
+        // response === 2 (Cancel): do nothing
+      });
+      return;
+    }
     const b = win.getBounds();
     const s = load();
     s.windowBounds = { x: b.x, y: b.y, width: b.width, height: b.height };
@@ -158,6 +185,7 @@ function buildMenu() {
         { label: "Extract…", accelerator: "CmdOrCtrl+E", click: () => mainWin?.webContents.send("menu-extract") },
         { type: "separator" },
         { label: "Test Integrity", accelerator: "CmdOrCtrl+T", click: () => mainWin?.webContents.send("menu-test") },
+        { label: "Clean macOS", click: () => mainWin?.webContents.send("menu-clean") },
         { type: "separator" },
         { role: "close" }
       ]

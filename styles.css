@@ -110,6 +110,14 @@ body {
   cursor: pointer;
   user-select: none;
   font-size: 10px;
+  display: inline-block;
+  width: 16px;
+  text-align: center;
+}
+
+.toggle-spacer {
+  display: inline-block;
+  width: 16px;
 }
 
 .rename-input {
