@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Settings</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, sans-serif;
+      background: #1e1e1e;
+      color: #e0e0e0;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    h1 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+
+    label { display: block; font-size: 12px; color: #aaa; margin-bottom: 4px; }
+
+    input, select {
+      width: 100%;
+      background: #3a3a3c;
+      color: #e0e0e0;
+      border: 1px solid #555;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 14px;
+      outline: none;
+      margin-bottom: 12px;
+    }
+    input[type="color"] { height: 40px; padding: 4px; cursor: pointer; }
+    input:focus, select:focus { border-color: #0a84ff; }
+
+    .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: auto; }
+
+    button {
+      padding: 8px 20px;
+      border-radius: 8px;
+      border: none;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    #cancel-btn { background: #3a3a3c; color: #e0e0e0; }
+    #save-btn   { background: #0a84ff; color: #fff; }
+  </style>
+</head>
+<body>
+  <h1>Settings</h1>
+
+  <label for="sel-color">File Selection Highlight Color</label>
+  <input type="color" id="sel-color">
+
+  <label for="btn-color">Button Highlight Color</label>
+  <input type="color" id="btn-color">
+
+  <div class="row">
+    <button id="cancel-btn">Cancel</button>
+    <button id="save-btn">Save</button>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require("electron");
+
+    let current = {};
+
+    ipcRenderer.invoke("settings-get-data").then(({ settings }) => {
+      current = settings;
+      document.getElementById("sel-color").value = settings.selectionColor || "#0000FF";
+      document.getElementById("btn-color").value = settings.buttonColor || "#0000FF";
+    });
+
+    document.getElementById("save-btn").addEventListener("click", () => {
+      current.selectionColor = document.getElementById("sel-color").value;
+      current.buttonColor = document.getElementById("btn-color").value;
+      ipcRenderer.invoke("settings-save", current);
+    });
+
+    document.getElementById("cancel-btn").addEventListener("click", () => {
+      ipcRenderer.invoke("settings-cancel");
+    });
+  </script>
+</body>
+</html>

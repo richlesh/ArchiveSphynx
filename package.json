@@ -1,0 +1,76 @@
+{
+  "name": "archivesphinx",
+  "productName": "ArchiveSphinx",
+  "version": "1.0.0",
+  "description": "ArchiveSphinx - Archive Management Tool",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist:mac:x64": "electron-builder --mac   --x64",
+    "dist:mac:arm64": "electron-builder --mac   --arm64",
+    "dist:win:x64": "electron-builder --win   --x64",
+    "dist:win:arm64": "electron-builder --win   --arm64",
+    "dist:linux:x64": "electron-builder --linux --x64",
+    "dist:linux:arm64": "electron-builder --linux --arm64",
+    "dist:all": "npm run dist:mac:x64 && npm run dist:mac:arm64 && npm run dist:win:x64 && npm run dist:win:arm64 && npm run dist:linux:x64 && npm run dist:linux:arm64"
+  },
+  "build": {
+    "appId": "com.richardlesh.archivesphinx",
+    "productName": "ArchiveSphinx",
+    "icon": "app_icon",
+    "artifactName": "ArchiveSphinx-${version}-${arch}.${ext}",
+    "files": [
+      "*.js",
+      "*.html",
+      "*.css",
+      "*.json",
+      "*.png",
+      "*.icns",
+      "*.ico",
+      "node_modules/**"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": "dmg",
+      "identity": "RICHARD A LESH (MMZ3Y97NTP)",
+      "notarize": true
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "icon": "app_icon_256.png",
+      "category": "Utility",
+      "target": [
+        {
+          "target": "deb",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "rpm",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    }
+  },
+  "keywords": [],
+  "author": {
+    "name": "Richard Lesh",
+    "email": "richlesh@github.com"
+  },
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "^41.3.0",
+    "electron-builder": "^26.8.1"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16"
+  }
+}

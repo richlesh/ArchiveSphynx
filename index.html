@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>ArchiveSphinx</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="toolbar">
+    <button id="btn-new" title="New Archive">&#128196; New</button>
+    <button id="btn-open" title="Open Archive">&#128194; Open</button>
+    <button id="btn-save" title="Save Archive" disabled>&#128190; Save</button>
+    <div class="toolbar-sep"></div>
+    <button id="btn-add" title="Add Files" disabled>&#10133; Add</button>
+    <button id="btn-folder" title="New Folder" disabled>&#128193; New Folder</button>
+    <button id="btn-delete" title="Delete Selected" disabled>&#128465; Delete</button>
+    <div class="toolbar-sep"></div>
+    <button id="btn-extract" title="Extract" disabled>&#128229; Extract All</button>
+    <div class="toolbar-sep"></div>
+    <button id="btn-test" title="Test Integrity" disabled>&#9989; Test</button>
+  </div>
+
+  <div id="path-bar"><span id="archive-path">No archive open</span></div>
+
+  <div id="tree-container">
+    <table id="tree-table">
+      <thead>
+        <tr id="header-row"></tr>
+      </thead>
+      <tbody id="tree-body"></tbody>
+    </table>
+  </div>
+
+  <div id="status-bar">
+    <span id="status-files">0 files</span>
+    <span id="status-size">0 bytes</span>
+  </div>
+
+  <script>
+    const { ipcRenderer, webUtils } = require("electron");
+    const path = require("path");
+    const AdmZip = require("adm-zip");
+    const fs = require("fs");
+
+    const COLUMNS = [
+      { id: "name", label: "Name", getter: (e) => e.name },
+      { id: "modified", label: "Modified", getter: (e) => e.header?.time ? new Date(e.header.time).toLocaleString() : "" },
+      { id: "size", label: "Size", getter: (e) => e.isDirectory ? "" : formatBytes(e.header?.size || 0) },
+      { id: "compressed", label: "Compressed", getter: (e) => e.isDirectory ? "" : formatBytes(e.header?.compressedSize || 0) },
+      { id: "attributes", label: "Attributes", getter: (e) => formatAttr(e.attr) },
+      { id: "type", label: "Type", getter: (e) => e.isDirectory ? "Folder" : extType(e.name) },
+      { id: "method", label: "Method", getter: (e) => e.isDirectory ? "" : (e.header?.method === 8 ? "Deflate" : e.header?.method === 0 ? "Store" : String(e.header?.method || "")) },
+    ];
+
+    let columnOrder = COLUMNS.map((c) => c.id);
+    let columnWidths = {};
+    let zip = null;
+    let archivePath = "";
+    let sortCol = "name";
+    let sortAsc = true;
+    let selectedPaths = new Set();
+    let lastClickedIdx = -1;
+    let collapsedPaths = new Set();
+
+    function formatBytes(b) {
+      if (b === 0) return "0 B";
+      const units = ["B", "KB", "MB", "GB"];
+      const i = Math.min(Math.floor(Math.log(b) / Math.log(1024)), units.length - 1);
+      return (b / Math.pow(1024, i)).toFixed(i ? 1 : 0) + " " + units[i];
+    }
+
+    function formatAttr(attr) {
+      if (!attr) return "";
+      const a = attr >>> 16;
+      if (a === 0) return "";
+      const r = (a & 0o444) ? "r" : "-";
+      const w = (a & 0o222) ? "w" : "-";
+      const x = (a & 0o111) ? "x" : "-";
+      return r + w + x;
+    }
+
+    function extType(name) {
+      const ext = path.extname(name).toLowerCase();
+      if (!ext) return "File";
+      return ext.slice(1).toUpperCase() + " File";
+    }
+
+    function saveZip() {
+      zip.getEntries().forEach((e) => { e.header.flags &= ~0x08; });
+      zip.writeZip(archivePath);
+      zip = new AdmZip(archivePath);
+    }
+
+    // Load column order from settings
+    async function loadColumnOrder() {
+      const { settings } = await ipcRenderer.invoke("settings-get-data");
+      if (settings.columnOrder && Array.isArray(settings.columnOrder)) {
+        const valid = settings.columnOrder.filter((id) => COLUMNS.find((c) => c.id === id));
+        if (valid.length === COLUMNS.length) columnOrder = valid;
+      }
+      if (settings.columnWidths) columnWidths = settings.columnWidths;
+      applyColors(settings);
+    }
+
+    function applyColors(settings) {
+      const sel = settings.selectionColor || "#0000FF";
+      const btn = settings.buttonColor || "#0000FF";
+      document.documentElement.style.setProperty("--selection-color", sel);
+      document.documentElement.style.setProperty("--button-hover", btn);
+    }
+
+    async function saveColumnOrder() {
+      const { settings } = await ipcRenderer.invoke("settings-get-data");
+      await ipcRenderer.invoke("settings-save", { ...settings, columnOrder, columnWidths });
+    }
+
+    // Build header
+    function buildHeader() {
+      const row = document.getElementById("header-row");
+      row.innerHTML = "";
+      const tableWidth = document.getElementById("tree-table").offsetWidth;
+      columnOrder.forEach((colId) => {
+        const col = COLUMNS.find((c) => c.id === colId);
+        const th = document.createElement("th");
+        th.textContent = col.label + (sortCol === colId ? (sortAsc ? " ▲" : " ▼") : "");
+        th.dataset.col = colId;
+        th.draggable = true;
+        if (columnWidths[colId]) th.style.width = columnWidths[colId] + "%";
+        th.addEventListener("click", (e) => {
+          if (e.target.classList.contains("col-resize")) return;
+          if (sortCol === colId) sortAsc = !sortAsc;
+          else { sortCol = colId; sortAsc = true; }
+          render();
+        });
+        th.addEventListener("dragstart", (e) => {
+          if (e.target.classList.contains("col-resize")) { e.preventDefault(); return; }
+          e.dataTransfer.setData("text/plain", colId);
+        });
+        th.addEventListener("dragover", (e) => e.preventDefault());
+        th.addEventListener("drop", (e) => {
+          e.preventDefault();
+          const from = e.dataTransfer.getData("text/plain");
+          const to = colId;
+          if (from === to) return;
+          const fromIdx = columnOrder.indexOf(from);
+          const toIdx = columnOrder.indexOf(to);
+          columnOrder.splice(fromIdx, 1);
+          columnOrder.splice(toIdx, 0, from);
+          saveColumnOrder();
+          render();
+        });
+        // Resize handle
+        const handle = document.createElement("span");
+        handle.className = "col-resize";
+        handle.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const startX = e.clientX;
+          const startW = th.offsetWidth;
+          const onMove = (ev) => {
+            const newW = Math.max(40, startW + ev.clientX - startX);
+            const pct = (newW / tableWidth) * 100;
+            th.style.width = pct + "%";
+            columnWidths[colId] = Math.round(pct * 100) / 100;
+          };
+          const onUp = () => {
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onUp);
+            saveColumnOrder();
+          };
+          document.addEventListener("mousemove", onMove);
+          document.addEventListener("mouseup", onUp);
+        });
+        th.appendChild(handle);
+        row.appendChild(th);
+      });
+    }
+
+    function getEntries() {
+      if (!zip) return [];
+      return zip.getEntries();
+    }
+
+    function sortEntries(entries) {
+      const col = COLUMNS.find((c) => c.id === sortCol);
+      if (!col) return entries;
+      return [...entries].sort((a, b) => {
+        let va, vb;
+        if (sortCol === "size" || sortCol === "compressed") {
+          va = a.isDirectory ? -1 : (a.header?.[sortCol === "size" ? "size" : "compressedSize"] || 0);
+          vb = b.isDirectory ? -1 : (b.header?.[sortCol === "size" ? "size" : "compressedSize"] || 0);
+        } else if (sortCol === "modified") {
+          va = a.header?.time ? new Date(a.header.time).getTime() : 0;
+          vb = b.header?.time ? new Date(b.header.time).getTime() : 0;
+        } else if (sortCol === "name") {
+          va = path.basename(a.entryName.replace(/\/$/, "")).toLowerCase();
+          vb = path.basename(b.entryName.replace(/\/$/, "")).toLowerCase();
+        } else {
+          va = String(col.getter(a)).toLowerCase();
+          vb = String(col.getter(b)).toLowerCase();
+        }
+        if (va < vb) return sortAsc ? -1 : 1;
+        if (va > vb) return sortAsc ? 1 : -1;
+        return 0;
+      });
+    }
+
+    function getParent(entryName) {
+      const trimmed = entryName.replace(/\/$/, "");
+      const idx = trimmed.lastIndexOf("/");
+      return idx < 0 ? "" : trimmed.slice(0, idx + 1);
+    }
+
+    function buildVisibleList() {
+      if (!zip) return [];
+      const entries = zip.getEntries();
+      // Group entries by parent folder
+      const children = new Map(); // parent path -> entries
+      entries.forEach((e) => {
+        const parent = getParent(e.entryName);
+        if (!children.has(parent)) children.set(parent, []);
+        children.get(parent).push(e);
+      });
+      // Sort each group
+      for (const [, list] of children) {
+        const sorted = sortEntries(list);
+        list.length = 0;
+        list.push(...sorted);
+      }
+      // Walk tree depth-first, respecting collapsed state
+      const result = [];
+      function walk(parentPath) {
+        const list = children.get(parentPath) || [];
+        list.forEach((entry) => {
+          result.push(entry);
+          if (entry.isDirectory && !collapsedPaths.has(entry.entryName)) {
+            walk(entry.entryName);
+          }
+        });
+      }
+      walk("");
+      return result;
+    }
+
+    function render() {
+      buildHeader();
+      const body = document.getElementById("tree-body");
+      body.innerHTML = "";
+      const visibleEntries = buildVisibleList();
+      visibleEntries.forEach((entry, idx) => {
+        const tr = document.createElement("tr");
+        tr.dataset.path = entry.entryName;
+        tr.draggable = true;
+        if (selectedPaths.has(entry.entryName)) tr.classList.add("selected");
+        tr.addEventListener("dragstart", (e) => {
+          e.dataTransfer.setData("application/x-archivesphinx-entry", entry.entryName);
+          e.dataTransfer.effectAllowed = "move";
+        });
+        tr.addEventListener("dragover", (e) => {
+          if (e.dataTransfer.types.includes("application/x-archivesphinx-entry")) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            tr.classList.add("drop-target");
+          } else if (e.dataTransfer.types.includes("Files") && zip) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+            tr.classList.add("drop-target");
+          }
+        });
+        tr.addEventListener("dragleave", () => tr.classList.remove("drop-target"));
+        tr.addEventListener("drop", (e) => {
+          tr.classList.remove("drop-target");
+          const srcPath = e.dataTransfer.getData("application/x-archivesphinx-entry");
+          if (srcPath) {
+            e.preventDefault();
+            e.stopPropagation();
+            const destFolder = entry.isDirectory ? entry.entryName : getParent(entry.entryName);
+            moveEntry(srcPath, destFolder);
+          } else if (e.dataTransfer.files.length) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!zip || !archivePath) return;
+            const targetFolder = entry.isDirectory ? entry.entryName : getParent(entry.entryName);
+            [...e.dataTransfer.files].forEach((file) => addPathToZip(webUtils.getPathForFile(file), targetFolder));
+            saveZip();
+            render();
+          }
+        });
+        let clickTimer = null;
+        tr.addEventListener("click", (e) => {
+          if (e.target.classList.contains("toggle")) return;
+          if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; return; }
+          clickTimer = setTimeout(() => {
+            clickTimer = null;
+            handleRowClick(entry.entryName, idx, e);
+          }, 250);
+        });
+        tr.addEventListener("dblclick", (e) => {
+          if (e.target.classList.contains("toggle")) return;
+          if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+          startRename(entry, tr);
+        });
+        columnOrder.forEach((colId) => {
+          const col = COLUMNS.find((c) => c.id === colId);
+          const td = document.createElement("td");
+          if (colId === "name") {
+            const depth = entry.entryName.replace(/\/$/, "").split("/").length - 1;
+            td.style.paddingLeft = (depth * 16 + 8) + "px";
+            if (entry.isDirectory) {
+              const toggle = document.createElement("span");
+              toggle.classList.add("toggle");
+              toggle.textContent = collapsedPaths.has(entry.entryName) ? "▶ " : "▼ ";
+              toggle.addEventListener("click", (e) => {
+                e.stopPropagation();
+                if (collapsedPaths.has(entry.entryName)) collapsedPaths.delete(entry.entryName);
+                else collapsedPaths.add(entry.entryName);
+                render();
+              });
+              td.appendChild(toggle);
+            } else {
+              const spacer = document.createElement("span");
+              spacer.textContent = "   ";
+              td.appendChild(spacer);
+            }
+            const icon = document.createTextNode(entry.isDirectory ? "📁 " : "📄 ");
+            td.appendChild(icon);
+            td.appendChild(document.createTextNode(path.basename(entry.entryName.replace(/\/$/, ""))));
+          } else {
+            td.textContent = col.getter(entry);
+          }
+          tr.appendChild(td);
+        });
+        body.appendChild(tr);
+      });
+      updateStatus();
+    }
+
+    function handleRowClick(entryPath, idx, e) {
+      if (e.metaKey || e.ctrlKey) {
+        if (selectedPaths.has(entryPath)) selectedPaths.delete(entryPath);
+        else selectedPaths.add(entryPath);
+      } else if (e.shiftKey && lastClickedIdx >= 0) {
+        const entries = buildVisibleList();
+        const start = Math.min(lastClickedIdx, idx);
+        const end = Math.max(lastClickedIdx, idx);
+        for (let i = start; i <= end; i++) {
+          selectedPaths.add(entries[i].entryName);
+        }
+      } else {
+        selectedPaths.clear();
+        selectedPaths.add(entryPath);
+      }
+      lastClickedIdx = idx;
+      render();
+    }
+
+    function getSelectedFolder() {
+      if (selectedPaths.size === 0) return "";
+      const first = [...selectedPaths][0];
+      if (first.endsWith("/")) return first;
+      const parts = first.split("/");
+      parts.pop();
+      return parts.length ? parts.join("/") + "/" : "";
+    }
+
+    function moveEntry(srcPath, destFolder) {
+      if (!zip) return;
+      if (srcPath === destFolder) return;
+      if (destFolder.startsWith(srcPath)) return;
+      if (getParent(srcPath) === destFolder) return;
+      const baseName = path.basename(srcPath.replace(/\/$/, ""));
+      const isDir = srcPath.endsWith("/");
+      if (isDir) {
+        const newBase = destFolder + baseName + "/";
+        zip.getEntries()
+          .filter((e) => e.entryName.startsWith(srcPath))
+          .forEach((e) => { e.entryName = newBase + e.entryName.slice(srcPath.length); });
+      } else {
+        const entry = zip.getEntry(srcPath);
+        if (!entry) return;
+        entry.entryName = destFolder + baseName;
+      }
+      selectedPaths.clear();
+      saveZip();
+      render();
+    }
+
+    function startRename(entry, tr) {
+      if (!zip) return;
+      const nameColIdx = columnOrder.indexOf("name");
+      if (nameColIdx < 0) return;
+      const td = tr.children[nameColIdx];
+      const oldName = path.basename(entry.entryName.replace(/\/$/, ""));
+      tr.draggable = false;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = oldName;
+      input.className = "rename-input";
+      td.textContent = "";
+      td.appendChild(input);
+      input.focus();
+      input.select();
+
+      let committed = false;
+      const commit = () => {
+        if (committed) return;
+        committed = true;
+        const newName = input.value.trim();
+        if (newName && newName !== oldName) {
+          const parent = getParent(entry.entryName);
+          const oldPath = entry.entryName;
+          const isDir = entry.isDirectory;
+          const newPath = parent + newName + (isDir ? "/" : "");
+          // Revert if a folder with that name already exists
+          if (isDir && zip.getEntry(newPath)) { render(); return; }
+          if (isDir) {
+            zip.getEntries()
+              .filter((e) => e.entryName.startsWith(oldPath))
+              .forEach((e) => { e.entryName = newPath + e.entryName.slice(oldPath.length); });
+          } else {
+            entry.entryName = newPath;
+          }
+          selectedPaths.delete(oldPath);
+          selectedPaths.add(newPath);
+          saveZip();
+        }
+        render();
+      };
+
+      input.addEventListener("blur", commit);
+      input.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+        if (e.key === "Escape") { input.value = oldName; input.blur(); }
+      });
+      input.addEventListener("click", (e) => e.stopPropagation());
+      input.addEventListener("mousedown", (e) => e.stopPropagation());
+      input.addEventListener("dblclick", (e) => e.stopPropagation());
+    }
+
+    function updateStatus() {
+      const entries = zip ? zip.getEntries() : [];
+      const files = entries.filter((e) => !e.isDirectory);
+      document.getElementById("status-files").textContent = files.length + " file" + (files.length !== 1 ? "s" : "");
+      const totalCompressed = files.reduce((sum, e) => sum + (e.header?.compressedSize || 0), 0);
+      document.getElementById("status-size").textContent = formatBytes(totalCompressed) + " compressed";
+      updateToolbar();
+    }
+
+    function updateToolbar() {
+      const hasArchive = !!zip;
+      const hasSelection = selectedPaths.size > 0;
+      const selectionIsFolder = hasSelection && [...selectedPaths].every((p) => p.endsWith("/"));
+      document.getElementById("btn-save").disabled = !hasArchive;
+      document.getElementById("btn-add").disabled = !hasArchive;
+      document.getElementById("btn-folder").disabled = !hasArchive || (hasSelection && !selectionIsFolder);
+      document.getElementById("btn-delete").disabled = !hasArchive || !hasSelection;
+      document.getElementById("btn-extract").disabled = !hasArchive;
+      document.getElementById("btn-test").disabled = !hasArchive;
+      document.getElementById("btn-extract").textContent = hasSelection ? "📥 Extract Selected" : "📥 Extract All";
+    }
+
+    function updatePathBar() {
+      document.getElementById("archive-path").textContent = archivePath || "No archive open";
+    }
+
+    // Archive operations
+    async function newArchive() {
+      const result = await ipcRenderer.invoke("dialog-save", {
+        title: "New Archive",
+        filters: [{ name: "ZIP Archives", extensions: ["zip"] }],
+      });
+      if (!result) return;
+      archivePath = result;
+      zip = new AdmZip();
+      saveZip();
+      selectedPaths.clear();
+      updatePathBar();
+      render();
+    }
+
+    async function openArchive() {
+      const result = await ipcRenderer.invoke("dialog-open", {
+        title: "Open Archive",
+        filters: [{ name: "ZIP Archives", extensions: ["zip"] }],
+        properties: ["openFile"],
+      });
+      if (!result || !result[0]) return;
+      const alreadyOpen = await ipcRenderer.invoke("check-open-file", result[0]);
+      if (alreadyOpen) return;
+      if (zip) {
+        ipcRenderer.invoke("open-in-new-window", result[0]);
+      } else {
+        archivePath = result[0];
+        zip = new AdmZip(archivePath);
+        selectedPaths.clear();
+        ipcRenderer.invoke("register-open-file", archivePath);
+        updatePathBar();
+        render();
+      }
+    }
+
+    function saveArchive() {
+      if (!zip || !archivePath) return;
+      saveZip();
+      render();
+    }
+
+    async function addFiles() {
+      if (!zip) return;
+      const result = await ipcRenderer.invoke("dialog-open", {
+        title: "Add Files",
+        properties: ["openFile", "multiSelections"],
+      });
+      if (!result || !result.length) return;
+      const folder = getSelectedFolder();
+      result.forEach((filePath) => {
+        const name = path.basename(filePath);
+        const data = fs.readFileSync(filePath);
+        zip.addFile(folder + name, data);
+      });
+      saveZip();
+      render();
+    }
+
+    function newFolder() {
+      if (!zip) return;
+      if (selectedPaths.size > 0 && ![...selectedPaths].some((p) => p.endsWith("/"))) return;
+      const parent = getSelectedFolder();
+      let name = "Untitled Folder";
+      let suffix = 1;
+      while (zip.getEntry(parent + name + "/")) {
+        name = "Untitled Folder " + suffix++;
+      }
+      const newPath = parent + name + "/";
+      zip.addFile(newPath, Buffer.alloc(0));
+      saveZip();
+      selectedPaths.clear();
+      selectedPaths.add(newPath);
+      // Expand parent so new folder is visible
+      if (parent) collapsedPaths.delete(parent);
+      render();
+      // Enter rename mode on the new folder row
+      const row = document.querySelector(`tr[data-path="${CSS.escape(newPath)}"]`);
+      if (row) {
+        const entry = zip.getEntry(newPath);
+        if (entry) startRename(entry, row);
+      }
+    }
+
+    function deleteSelected() {
+      if (!zip || selectedPaths.size === 0) return;
+      [...selectedPaths].forEach((p) => {
+        zip.deleteFile(p);
+        // Also delete children if it's a folder
+        if (p.endsWith("/")) {
+          zip.getEntries()
+            .filter((e) => e.entryName.startsWith(p) && e.entryName !== p)
+            .forEach((e) => zip.deleteFile(e.entryName));
+        }
+      });
+      selectedPaths.clear();
+      saveZip();
+      render();
+    }
+
+    async function extractSelected() {
+      if (!zip) return;
+      const result = await ipcRenderer.invoke("dialog-open", {
+        title: "Extract To",
+        properties: ["openDirectory"],
+      });
+      if (!result || !result[0]) return;
+      const dest = result[0];
+      if (selectedPaths.size === 0) {
+        zip.extractAllTo(dest, true);
+      } else {
+        [...selectedPaths].forEach((p) => {
+          const entry = zip.getEntry(p);
+          if (entry) {
+            if (entry.isDirectory) {
+              zip.getEntries()
+                .filter((e) => e.entryName.startsWith(p))
+                .forEach((e) => zip.extractEntryTo(e, dest, true, true));
+            } else {
+              zip.extractEntryTo(entry, dest, true, true);
+            }
+          }
+        });
+      }
+    }
+
+    async function testIntegrity() {
+      if (!zip) return;
+      const errors = [];
+      const entries = zip.getEntries();
+      for (const entry of entries) {
+        if (entry.isDirectory) continue;
+        try {
+          const data = entry.getData();
+          if (!data) errors.push(entry.entryName + ": unable to read data");
+        } catch (e) {
+          errors.push(entry.entryName + ": " + e.message);
+        }
+      }
+      const fileCount = entries.filter((e) => !e.isDirectory).length;
+      const message = errors.length === 0
+        ? "Archive integrity test passed.\nAll " + fileCount + " files are OK."
+        : "Archive has " + errors.length + " problem(s):\n\n" + errors.join("\n");
+      await ipcRenderer.invoke("show-test-result", {
+        type: errors.length === 0 ? "info" : "warning",
+        message,
+      });
+    }
+
+    // Prevent Electron from navigating when files are dropped outside the tree
+    document.addEventListener("dragover", (e) => {
+      if (!e.target.closest("#tree-container")) e.preventDefault();
+    });
+    document.addEventListener("drop", (e) => {
+      if (!e.target.closest("#tree-container")) e.preventDefault();
+    });
+
+    // Drag and drop onto main pane
+    const treeContainer = document.getElementById("tree-container");
+
+    treeContainer.addEventListener("click", (e) => {
+      if (!e.target.closest("tr[data-path]")) {
+        selectedPaths.clear();
+        render();
+      }
+    });
+
+    treeContainer.addEventListener("dragover", (e) => {
+      if (e.dataTransfer.types.includes("application/x-archivesphinx-entry")) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        return;
+      }
+      if (!zip) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    });
+    treeContainer.addEventListener("drop", (e) => {
+      const srcPath = e.dataTransfer.getData("application/x-archivesphinx-entry");
+      if (srcPath) {
+        e.preventDefault();
+        moveEntry(srcPath, "");
+        return;
+      }
+      if (e.dataTransfer.types.includes("application/x-archivesphinx-entry")) return;
+      e.preventDefault();
+      if (!zip || !archivePath) return;
+      const files = [...e.dataTransfer.files];
+      if (!files.length) return;
+      // Determine target folder from drop target row
+      let targetFolder = "";
+      const row = e.target.closest("tr[data-path]");
+      if (row && row.dataset.path.endsWith("/")) {
+        targetFolder = row.dataset.path;
+      } else if (row) {
+        const parts = row.dataset.path.split("/");
+        parts.pop();
+        targetFolder = parts.length ? parts.join("/") + "/" : "";
+      }
+      files.forEach((file) => {
+        addPathToZip(webUtils.getPathForFile(file), targetFolder);
+      });
+      saveZip();
+      render();
+    });
+
+    function addPathToZip(fsPath, targetFolder) {
+      const stat = fs.statSync(fsPath);
+      const name = path.basename(fsPath);
+      if (stat.isDirectory()) {
+        const folderPath = targetFolder + name + "/";
+        zip.addFile(folderPath, Buffer.alloc(0));
+        fs.readdirSync(fsPath).forEach((child) => {
+          addPathToZip(path.join(fsPath, child), folderPath);
+        });
+      } else {
+        zip.addFile(targetFolder + name, fs.readFileSync(fsPath));
+      }
+    }
+
+    // Open archive from dock drag (macOS)
+    ipcRenderer.on("open-archive-path", (_e, filePath) => {
+      archivePath = filePath;
+      zip = new AdmZip(archivePath);
+      selectedPaths.clear();
+      ipcRenderer.invoke("register-open-file", archivePath);
+      updatePathBar();
+      render();
+    });
+
+    // Button handlers
+    document.getElementById("btn-new").addEventListener("click", newArchive);
+    document.getElementById("btn-open").addEventListener("click", openArchive);
+    document.getElementById("btn-save").addEventListener("click", saveArchive);
+    document.getElementById("btn-add").addEventListener("click", addFiles);
+    document.getElementById("btn-folder").addEventListener("click", newFolder);
+    document.getElementById("btn-delete").addEventListener("click", deleteSelected);
+    document.getElementById("btn-extract").addEventListener("click", extractSelected);
+    document.getElementById("btn-test").addEventListener("click", testIntegrity);
+
+    // IPC from menu
+    ipcRenderer.on("menu-new", newArchive);
+    ipcRenderer.on("menu-open", openArchive);
+    ipcRenderer.on("menu-save", saveArchive);
+    ipcRenderer.on("menu-add", addFiles);
+    ipcRenderer.on("menu-new-folder", newFolder);
+    ipcRenderer.on("menu-delete", deleteSelected);
+    ipcRenderer.on("menu-extract", extractSelected);
+    ipcRenderer.on("menu-test", testIntegrity);
+    ipcRenderer.on("settings-updated", async () => {
+      await loadColumnOrder();
+      render();
+    });
+
+    // Init
+    loadColumnOrder().then(() => render());
+  </script>
+</body>
+</html>

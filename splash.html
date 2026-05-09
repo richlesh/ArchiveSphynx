@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>ArchiveSphinx</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, sans-serif;
+      background: #1e1e1e;
+      color: #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      gap: 12px;
+      padding: 24px;
+      text-align: center;
+      cursor: default;
+      user-select: none;
+    }
+
+    img { width: 96px; height: 96px; border-radius: 20px; }
+
+    h1 { font-size: 20px; font-weight: 600; }
+
+    p { font-size: 13px; color: #aaa; line-height: 1.6; }
+
+    #donate {
+      font-size: 13px;
+      color: #e0e0e0;
+      line-height: 1.8;
+      margin-top: 4px;
+    }
+
+    a { color: #4da3ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <img id="icon">
+  <h1>ArchiveSphinx</h1>
+  <p>Version <span id="app-version"></span></p>
+  <p id="donate">
+    If you enjoy using this product<br>
+    please consider donating to help<br>
+    fund this and other open source<br>
+    projects at
+    <a id="donate-link" href="https://glowingcat.com/ArchiveSphinx.html">Glowing Cat Software</a>.
+  </p>
+
+  <script>
+    const { ipcRenderer } = require("electron");
+
+    ipcRenderer.on("icon-path", (_e, p) => document.getElementById("icon").src = p);
+    ipcRenderer.on("app-version", (_e, v) => document.getElementById("app-version").textContent = v);
+
+    document.getElementById("donate-link").addEventListener("click", e => {
+      e.preventDefault();
+      ipcRenderer.invoke("open-external", "https://glowingcat.com/ArchiveSphinx.html");
+    });
+
+    // close on click anywhere except the link, or after 20 seconds
+    document.body.addEventListener("click", e => {
+      if (e.target.id === "donate-link") return;
+      ipcRenderer.send("splash-close");
+    });
+    setTimeout(() => ipcRenderer.send("splash-close"), 20000);
+  </script>
+</body>
+</html>

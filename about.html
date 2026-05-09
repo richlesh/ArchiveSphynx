@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>About ArchiveSphinx</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, sans-serif;
+      background: #1e1e1e;
+      color: #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      gap: 12px;
+      padding: 40px 24px;
+      text-align: center;
+    }
+
+    img { width: 96px; height: 96px; border-radius: 20px; }
+
+    h1 { font-size: 20px; font-weight: 600; }
+
+    p { font-size: 13px; color: #aaa; line-height: 1.6; }
+
+    a { color: #4da3ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    button {
+      margin-top: 8px;
+      padding: 7px 24px;
+      background: #0a84ff;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button:hover { background: #0070d8; }
+  </style>
+</head>
+<body>
+  <img id="icon">
+  <h1>ArchiveSphinx</h1>
+  <p>
+    Version <span id="app-version"></span><br>
+    ©2026 Richard Lesh<br>
+    Built with Electron v<span id="electron-version"></span><br>
+    <a id="website" href="https://glowingcat.com/ArchiveSphinx.html">Glowing Cat Software</a><br>
+    <a id="issues" href="https://github.com/richlesh/ArchiveSphinx/issues">Report issues on GitHub</a>
+  </p>
+  <button id="ok-btn">OK</button>
+  <p id="thank-you" style="display:none;font-weight:600;">Thank you for donating to<br>Glowing Cat Software!</p>
+
+  <script>
+    const { ipcRenderer } = require("electron");
+
+    document.getElementById("electron-version").textContent = process.versions.electron;
+
+    ipcRenderer.on("icon-path", (_e, iconPath) => {
+      document.getElementById("icon").src = iconPath;
+    });
+
+    ipcRenderer.on("app-version", (_e, version) => {
+      document.getElementById("app-version").textContent = version;
+    });
+
+    ipcRenderer.on("licensed", () => {
+      document.getElementById("thank-you").style.display = "";
+    });
+
+    document.getElementById("website").addEventListener("click", e => {
+      e.preventDefault();
+      ipcRenderer.invoke("open-external", "https://glowingcat.com/ArchiveSphinx.html");
+    });
+
+    document.getElementById("issues").addEventListener("click", e => {
+      e.preventDefault();
+      ipcRenderer.invoke("open-external", "https://github.com/richlesh/ArchiveSphinx/issues");
+    });
+
+    document.getElementById("ok-btn").addEventListener("click", () => {
+      ipcRenderer.invoke("close-about");
+    });
+  </script>
+</body>
+</html>
