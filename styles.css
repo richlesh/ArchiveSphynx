@@ -56,6 +56,34 @@ body {
   white-space: nowrap;
 }
 
+#progress { color: #0a84ff; font-weight: 600; font-size: 11px; }
+#progress-bar { height: 10px; border-radius: 4px; width: 120px; vertical-align: middle; }
+#progress-track {
+  display: none;
+  width: 120px;
+  height: 10px;
+  background: #3a3a3c;
+  border-radius: 4px;
+  overflow: hidden;
+  vertical-align: middle;
+  position: relative;
+}
+#progress-track.active { display: inline-block; }
+#progress-track .slider {
+  position: absolute;
+  top: 0;
+  width: 40%;
+  height: 100%;
+  background: #0a84ff;
+  border-radius: 4px;
+  animation: slide 1.4s ease-in-out infinite alternate;
+}
+
+@keyframes slide {
+  0% { left: 0%; }
+  100% { left: 60%; }
+}
+
 #tree-container {
   flex: 1;
   overflow: auto;

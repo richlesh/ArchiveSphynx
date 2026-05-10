@@ -31,7 +31,11 @@
       outline: none;
       margin-bottom: 12px;
     }
-    input[type="color"] { height: 40px; padding: 4px; cursor: pointer; }
+    input[type="color"] { height: 32px; padding: 2px; cursor: pointer; }
+    .color-row { display: flex; gap: 10px; margin-bottom: 12px; }
+    .color-field { flex: 1; }
+    .color-field label { margin-bottom: 4px; }
+    .color-field input { width: 100%; }
     input:focus, select:focus { border-color: #0a84ff; }
 
     .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: auto; }
@@ -50,11 +54,28 @@
 <body>
   <h1>Settings</h1>
 
-  <label for="sel-color">File Selection Highlight Color</label>
-  <input type="color" id="sel-color">
+  <div class="color-row">
+    <div class="color-field">
+      <label for="sel-color">Selection Highlight</label>
+      <input type="color" id="sel-color" value="#0000FF">
+    </div>
+    <div class="color-field">
+      <label for="btn-color">Button Highlight</label>
+      <input type="color" id="btn-color" value="#0000FF">
+    </div>
+  </div>
 
-  <label for="btn-color">Button Highlight Color</label>
-  <input type="color" id="btn-color">
+  <label for="zstd-path">Zstandard (zstd) Executable Path <small>(leave empty to autodetect)</small></label>
+  <div style="display:flex;gap:6px;margin-bottom:12px;">
+    <input type="text" id="zstd-path" placeholder="auto-detect" style="margin-bottom:0;flex:1;">
+    <button id="browse-zstd" style="padding:6px 12px;background:#3a3a3c;color:#e0e0e0;border:1px solid #555;border-radius:8px;cursor:pointer;white-space:nowrap;">Browse…</button>
+  </div>
+
+  <label for="bzip2-path">Bzip2 Executable Path <small>(leave empty to autodetect)</small></label>
+  <div style="display:flex;gap:6px;margin-bottom:12px;">
+    <input type="text" id="bzip2-path" placeholder="auto-detect" style="margin-bottom:0;flex:1;">
+    <button id="browse-bzip2" style="padding:6px 12px;background:#3a3a3c;color:#e0e0e0;border:1px solid #555;border-radius:8px;cursor:pointer;white-space:nowrap;">Browse…</button>
+  </div>
 
   <div class="row">
     <button id="cancel-btn">Cancel</button>
@@ -63,6 +84,21 @@
 
   <script>
     const { ipcRenderer } = require("electron");
+    const fs = require("fs");
+    const { execFileSync } = require("child_process");
+
+    function detectTool(name, searchPaths) {
+      try { execFileSync(name, ["--version"], { timeout: 3000, stdio: "ignore" }); return name; } catch {}
+      for (const p of searchPaths) { if (fs.existsSync(p)) return p; }
+      return "";
+    }
+
+    const ZSTD_PATHS = process.platform === "win32"
+      ? ["C:\\Program Files\\zstd\\zstd.exe", "C:\\Program Files (x86)\\zstd\\zstd.exe"]
+      : ["/opt/homebrew/bin/zstd", "/usr/local/bin/zstd", "/usr/bin/zstd"];
+    const BZIP2_PATHS = process.platform === "win32"
+      ? ["C:\\Program Files\\bzip2\\bzip2.exe", "C:\\Program Files (x86)\\GnuWin32\\bin\\bzip2.exe"]
+      : ["/opt/homebrew/bin/bzip2", "/usr/local/bin/bzip2", "/usr/bin/bzip2"];
 
     let current = {};
 
@@ -70,16 +106,30 @@
       current = settings;
       document.getElementById("sel-color").value = settings.selectionColor || "#0000FF";
       document.getElementById("btn-color").value = settings.buttonColor || "#0000FF";
+      document.getElementById("zstd-path").value = settings.zstdPath || detectTool("zstd", ZSTD_PATHS);
+      document.getElementById("bzip2-path").value = settings.bzip2Path || detectTool("bzip2", BZIP2_PATHS);
     });
 
     document.getElementById("save-btn").addEventListener("click", () => {
       current.selectionColor = document.getElementById("sel-color").value;
       current.buttonColor = document.getElementById("btn-color").value;
+      current.zstdPath = document.getElementById("zstd-path").value.trim();
+      current.bzip2Path = document.getElementById("bzip2-path").value.trim();
       ipcRenderer.invoke("settings-save", current);
     });
 
     document.getElementById("cancel-btn").addEventListener("click", () => {
       ipcRenderer.invoke("settings-cancel");
+    });
+
+    document.getElementById("browse-zstd").addEventListener("click", async () => {
+      const result = await ipcRenderer.invoke("browse-file");
+      if (result) document.getElementById("zstd-path").value = result;
+    });
+
+    document.getElementById("browse-bzip2").addEventListener("click", async () => {
+      const result = await ipcRenderer.invoke("browse-file");
+      if (result) document.getElementById("bzip2-path").value = result;
     });
   </script>
 </body>

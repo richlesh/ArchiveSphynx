@@ -40,6 +40,7 @@ app.setAboutPanelOptions({
 });
 
 let mainWin, settingsWin;
+let menuState = { hasArchive: false, canSave: false, hasSelection: false, canNewFolder: false };
 const openFiles = new Map(); // filePath -> BrowserWindow
 
 ipcMain.handle("register-open-file", (_e, filePath) => {
@@ -47,9 +48,26 @@ ipcMain.handle("register-open-file", (_e, filePath) => {
   if (filePath) openFiles.set(filePath, win);
 });
 
+ipcMain.handle("unregister-open-file", (_e, filePath) => {
+  if (filePath) openFiles.delete(filePath);
+});
+
 ipcMain.handle("set-dirty", (_e, isDirty) => {
   const win = BrowserWindow.fromWebContents(_e.sender);
   if (win) win.isDirty = isDirty;
+});
+
+ipcMain.handle("set-saving", (_e, isSaving) => {
+  const win = BrowserWindow.fromWebContents(_e.sender);
+  if (win) win.isSaving = isSaving;
+});
+
+let menuRebuildTimer = null;
+
+ipcMain.handle("update-menu-state", (_e, state) => {
+  menuState = state;
+  if (menuRebuildTimer) clearTimeout(menuRebuildTimer);
+  menuRebuildTimer = setTimeout(() => { menuRebuildTimer = null; buildMenu(); }, 100);
 });
 
 ipcMain.handle("check-open-file", (_e, filePath) => {
@@ -78,7 +96,12 @@ function createWindow() {
   });
   win.loadFile("index.html");
   win.isDirty = false;
+  win.isSaving = false;
   win.on("close", (e) => {
+    if (win.isSaving) {
+      e.preventDefault();
+      return;
+    }
     if (win.isDirty) {
       e.preventDefault();
       dialog.showMessageBox(win, {
@@ -153,6 +176,8 @@ function showAbout() {
 
 function buildMenu() {
   const isMac = process.platform === "darwin";
+  const s = menuState;
+  const send = (ch) => () => { const w = BrowserWindow.getFocusedWindow() || mainWin; w?.webContents.send(ch); };
   const template = [
     {
       label: app.name,
@@ -174,18 +199,19 @@ function buildMenu() {
     {
       label: "File",
       submenu: [
-        { label: "New Archive", accelerator: "CmdOrCtrl+N", click: () => mainWin?.webContents.send("menu-new") },
-        { label: "Open Archive…", accelerator: "CmdOrCtrl+O", click: () => mainWin?.webContents.send("menu-open") },
-        { label: "Save Archive", accelerator: "CmdOrCtrl+S", click: () => mainWin?.webContents.send("menu-save") },
+        { label: "New Archive", accelerator: "CmdOrCtrl+N", click: send("menu-new") },
+        { label: "Open Archive…", accelerator: "CmdOrCtrl+O", click: send("menu-open") },
+        { label: "Save Archive", accelerator: "CmdOrCtrl+S", enabled: s.canSave, click: send("menu-save") },
+        { label: "Save As…", accelerator: "CmdOrCtrl+Shift+S", enabled: s.hasArchive, click: send("menu-saveas") },
         { type: "separator" },
-        { label: "Add Files…", accelerator: "CmdOrCtrl+Shift+A", click: () => mainWin?.webContents.send("menu-add") },
-        { label: "New Folder", accelerator: "CmdOrCtrl+Shift+N", click: () => mainWin?.webContents.send("menu-new-folder") },
-        { label: "Delete", accelerator: "Delete", click: () => mainWin?.webContents.send("menu-delete") },
+        { label: "Add Files…", accelerator: "CmdOrCtrl+Shift+A", enabled: s.hasArchive, click: send("menu-add") },
+        { label: "New Folder", accelerator: "CmdOrCtrl+Shift+N", enabled: s.canNewFolder, click: send("menu-new-folder") },
+        { label: "Delete", accelerator: "Delete", enabled: s.hasSelection, click: send("menu-delete") },
         { type: "separator" },
-        { label: "Extract…", accelerator: "CmdOrCtrl+E", click: () => mainWin?.webContents.send("menu-extract") },
+        { label: "Extract…", accelerator: "CmdOrCtrl+E", enabled: s.hasArchive, click: send("menu-extract") },
         { type: "separator" },
-        { label: "Test Integrity", accelerator: "CmdOrCtrl+T", click: () => mainWin?.webContents.send("menu-test") },
-        { label: "Clean macOS", click: () => mainWin?.webContents.send("menu-clean") },
+        { label: "Test Integrity", accelerator: "CmdOrCtrl+T", enabled: s.hasArchive, click: send("menu-test") },
+        { label: "Clean macOS", enabled: s.hasArchive, click: send("menu-clean") },
         { type: "separator" },
         { role: "close" }
       ]
@@ -247,8 +273,8 @@ ipcMain.handle("license-cancel", () => licenseWin?.close());
 function openSettings() {
   if (settingsWin) return settingsWin.focus();
   settingsWin = new BrowserWindow({
-    width: 400,
-    height: 300,
+    width: 450,
+    height: 480,
     resizable: false,
     parent: mainWin,
     modal: true,
@@ -281,14 +307,111 @@ ipcMain.handle("open-in-new-window", (_e, filePath) => {
   });
 });
 
+ipcMain.handle("new-in-new-window", (_e, filePath) => {
+  const win = createWindow();
+  win.webContents.once("did-finish-load", () => {
+    win.webContents.send("new-archive-path", filePath);
+  });
+});
+
 ipcMain.handle("dialog-open", async (_e, opts) => {
-  const result = await dialog.showOpenDialog(mainWin, opts);
+  const win = BrowserWindow.fromWebContents(_e.sender);
+  const result = await dialog.showOpenDialog(win, opts);
   return result.canceled ? null : result.filePaths;
 });
 
 ipcMain.handle("dialog-save", async (_e, opts) => {
-  const result = await dialog.showSaveDialog(mainWin, opts);
+  const win = BrowserWindow.fromWebContents(_e.sender);
+  const result = await dialog.showSaveDialog(win, opts);
   return result.canceled ? null : result.filePath;
+});
+
+ipcMain.handle("browse-file", async (_e) => {
+  const win = BrowserWindow.fromWebContents(_e.sender);
+  const result = await dialog.showOpenDialog(win, { properties: ["openFile"] });
+  return result.canceled ? null : result.filePaths[0];
+});
+
+ipcMain.handle("tar-save", async (_e, { srcFile, entriesFile, outFile }) => {
+  const fsMod = require("fs");
+  const entries = JSON.parse(fsMod.readFileSync(entriesFile, "utf8"));
+  fsMod.unlinkSync(entriesFile);
+  console.log("tar-save:", entries.length, "entries, src:", srcFile, "out:", outFile);
+  const fdIn = srcFile ? fsMod.openSync(srcFile, "r") : null;
+  const fdOut = fsMod.openSync(outFile, "w");
+  let outPos = 0;
+  const cpBuf = Buffer.allocUnsafe(4 * 1024 * 1024);
+
+  const offsets = [];
+  for (const entry of entries) {
+    const size = entry.isDir ? 0 : (entry.size || 0);
+    // Write GNU @LongLink header for long names
+    if (entry.name.length > 100) {
+      const linkData = Buffer.from(entry.name + "\0");
+      const linkHeader = Buffer.alloc(512);
+      linkHeader.write("././@LongLink", 0);
+      linkHeader.write("0000000\0", 100);
+      linkHeader.write("0000000\0", 108);
+      linkHeader.write("0000000\0", 116);
+      linkHeader.write(linkData.length.toString(8).padStart(11, "0") + "\0", 124);
+      linkHeader.write("00000000000\0", 136);
+      linkHeader.write("        ", 148);
+      linkHeader[156] = 76; // 'L' type
+      linkHeader.write("ustar ", 257);
+      linkHeader.write(" \0", 263);
+      let ck = 0; for (let j = 0; j < 512; j++) ck += linkHeader[j];
+      linkHeader.write(ck.toString(8).padStart(6, "0") + "\0 ", 148);
+      fsMod.writeSync(fdOut, linkHeader, 0, 512, outPos); outPos += 512;
+      fsMod.writeSync(fdOut, linkData, 0, linkData.length, outPos); outPos += linkData.length;
+      const lpad = (512 - (linkData.length % 512)) % 512;
+      if (lpad > 0) { fsMod.writeSync(fdOut, Buffer.alloc(lpad), 0, lpad, outPos); outPos += lpad; }
+    }
+    // Build regular header
+    const header = Buffer.alloc(512);
+    const fname = entry.name.slice(0, 100);
+    header.write(fname, 0, Math.min(100, Buffer.byteLength(fname)));
+    header.write((entry.mode || (entry.isDir ? 0o755 : 0o644)).toString(8).padStart(7, "0") + "\0", 100);
+    header.write("0000000\0", 108);
+    header.write("0000000\0", 116);
+    header.write(size.toString(8).padStart(11, "0") + "\0", 124);
+    const mt = entry.mtime ? Math.floor(new Date(entry.mtime).getTime() / 1000) : 0;
+    header.write(mt.toString(8).padStart(11, "0") + "\0", 136);
+    header.write("        ", 148);
+    header[156] = entry.isDir ? 53 : 48;
+    header.write("ustar\0", 257);
+    header.write("00", 263);
+    let cksum = 0;
+    for (let j = 0; j < 512; j++) cksum += header[j];
+    header.write(cksum.toString(8).padStart(6, "0") + "\0 ", 148);
+    fsMod.writeSync(fdOut, header, 0, 512, outPos);
+    outPos += 512;
+    offsets.push(outPos); // data starts here
+    if (!entry.isDir && size > 0) {
+      if (entry.offset !== undefined && fdIn !== null) {
+        let remaining = size;
+        let srcPos = entry.offset;
+        while (remaining > 0) {
+          const toRead = Math.min(cpBuf.length, remaining);
+          const n = fsMod.readSync(fdIn, cpBuf, 0, toRead, srcPos);
+          fsMod.writeSync(fdOut, cpBuf, 0, n, outPos);
+          srcPos += n;
+          outPos += n;
+          remaining -= n;
+        }
+      } else if (entry.data) {
+        const buf = Buffer.from(entry.data, "base64");
+        fsMod.writeSync(fdOut, buf, 0, buf.length, outPos);
+        outPos += buf.length;
+      }
+      const pad = (512 - (size % 512)) % 512;
+      if (pad > 0) { fsMod.writeSync(fdOut, Buffer.alloc(pad), 0, pad, outPos); outPos += pad; }
+    }
+  }
+  fsMod.writeSync(fdOut, Buffer.alloc(1024), 0, 1024, outPos);
+  if (fdIn !== null) fsMod.closeSync(fdIn);
+  fsMod.closeSync(fdOut);
+  console.log("tar-save done:", ((outPos + 1024) / 1024 / 1024 / 1024).toFixed(2), "GB");
+  return offsets;
 });
 
 ipcMain.handle("show-message", async (_e, opts) => {
@@ -360,7 +483,16 @@ app.whenReady().then(() => {
 
 app.on("open-file", (event, filePath) => {
   event.preventDefault();
-  if (!filePath.toLowerCase().endsWith(".zip")) return;
+  const lower = filePath.toLowerCase();
+  const supported = [".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz", ".tar.zst", ".tzst"];
+  if (!supported.some((ext) => lower.endsWith(ext))) return;
+  if (lower.endsWith(".tar.zst") || lower.endsWith(".tzst")) {
+    const { isZstdAvailable } = require("./archive");
+    if (!isZstdAvailable()) {
+      dialog.showErrorBox("Cannot Open Archive", "Zstandard (zstd) command-line tool is not installed or not found.\nPlease install zstd and configure its path in Settings.");
+      return;
+    }
+  }
   const openInWindow = () => {
     const existing = openFiles.get(filePath);
     if (existing && !existing.isDestroyed()) { existing.focus(); return; }

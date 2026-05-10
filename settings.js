@@ -10,6 +10,8 @@ const DEFAULTS = {
   selectionColor: "#0000FF",
   buttonColor: "#0000FF",
   windowBounds: { width: 1000, height: 700 },
+  zstdPath: "",
+  bzip2Path: "",
 };
 
 function load() {
