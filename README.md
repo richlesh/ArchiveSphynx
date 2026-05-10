@@ -1,4 +1,4 @@
-# ArchiveSphinx v1.0.0
+# ArchiveSphinx v1.1.0
 
 A cross-platform archive management tool.
 
@@ -8,6 +8,14 @@ A cross-platform archive management tool.
 
 ## Features
 
+- Open and browse ZIP, 7z, RAR, JAR, TAR (.gz, .bz2, .xz, .zst, .7z), DEB, RPM, DMG, and ISO archives
+- Async streaming decompression for large archives
+- Drag-and-drop file reordering and external file import
+- Add, delete, rename, and extract entries
+- Read-only mode for non-writable formats (RAR, DEB, RPM, DMG, ISO)
+- Clean macOS metadata files (`.DS_Store`, `__MACOSX`) with one click
+- Configurable executable paths for gzip, bzip2, xz, zstd, and 7-zip
+- Save progress reporting for TAR archives
 - Settings window (save/load to `~/.archivesphinx-settings.json`)
 - License key validation (HMAC-SHA256 based)
 - Splash screen with donation link

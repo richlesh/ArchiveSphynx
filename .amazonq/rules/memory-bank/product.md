@@ -4,7 +4,7 @@
 ArchiveSphinx is a cross-platform archive management tool built with Electron. It provides settings persistence, license key validation, splash screen, and about window.
 
 ## Version
-1.0.0
+1.1.0
 
 ## Key Features
 
