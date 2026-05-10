@@ -12,6 +12,9 @@ const DEFAULTS = {
   windowBounds: { width: 1000, height: 700 },
   zstdPath: "",
   bzip2Path: "",
+  gzipPath: "",
+  xzPath: "",
+  sevenZipPath: "",
 };
 
 function load() {

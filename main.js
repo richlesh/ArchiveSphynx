@@ -274,7 +274,7 @@ function openSettings() {
   if (settingsWin) return settingsWin.focus();
   settingsWin = new BrowserWindow({
     width: 450,
-    height: 680,
+    height: 580,
     resizable: false,
     parent: mainWin,
     modal: true,
@@ -340,9 +340,12 @@ ipcMain.handle("tar-save", async (_e, { srcFile, entriesFile, outFile }) => {
   const fdOut = fsMod.openSync(outFile, "w");
   let outPos = 0;
   const cpBuf = Buffer.allocUnsafe(4 * 1024 * 1024);
+  const total = entries.length;
+  const sender = _e.sender;
 
   const offsets = [];
-  for (const entry of entries) {
+  for (let idx = 0; idx < total; idx++) {
+    const entry = entries[idx];
     const size = entry.isDir ? 0 : (entry.size || 0);
     // Write GNU @LongLink header for long names
     if (entry.name.length > 100) {
@@ -410,7 +413,9 @@ ipcMain.handle("tar-save", async (_e, { srcFile, entriesFile, outFile }) => {
       const pad = (512 - (size % 512)) % 512;
       if (pad > 0) { fsMod.writeSync(fdOut, Buffer.alloc(pad), 0, pad, outPos); outPos += pad; }
     }
+    if (idx % 100 === 0) sender.send("tar-save-progress", idx + 1, total);
   }
+  sender.send("tar-save-progress", total, total);
   fsMod.writeSync(fdOut, Buffer.alloc(1024), 0, 1024, outPos);
   if (fdIn !== null) fsMod.closeSync(fdIn);
   fsMod.closeSync(fdOut);
@@ -487,7 +492,7 @@ app.whenReady().then(() => {
 app.on("open-file", (event, filePath) => {
   event.preventDefault();
   const lower = filePath.toLowerCase();
-  const supported = [".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz", ".tar.zst", ".tzst", ".tar.7z", ".t7z", ".7z", ".rar"];
+  const supported = [".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz", ".tar.zst", ".tzst", ".tar.7z", ".t7z", ".7z", ".rar", ".jar", ".deb", ".rpm", ".dmg", ".iso"];
   if (!supported.some((ext) => lower.endsWith(ext))) return;
   if (lower.endsWith(".tar.zst") || lower.endsWith(".tzst")) {
     const { isZstdAvailable } = require("./archive");

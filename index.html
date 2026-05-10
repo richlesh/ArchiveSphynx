@@ -49,6 +49,7 @@
       const filters = [
         { name: "ZIP Archives", extensions: ["zip"] },
         { name: "7z Archives", extensions: ["7z"] },
+        { name: "JAR Archives", extensions: ["jar"] },
         { name: "TAR Archives", extensions: ["tar"] },
         { name: "Compressed TAR (gzip)", extensions: ["tgz"] },
         { name: "Compressed TAR (bzip2)", extensions: ["tbz2"] },
@@ -60,7 +61,7 @@
     }
 
     function getOpenFilters() {
-      const exts = ["zip", "7z", "rar", "tar", "tar.gz", "tgz", "tar.bz2", "tbz2", "tar.xz", "txz", "tar.7z", "t7z"];
+      const exts = ["zip", "7z", "rar", "jar", "deb", "rpm", "dmg", "iso", "tar", "tar.gz", "tgz", "tar.bz2", "tbz2", "tar.xz", "txz", "tar.7z", "t7z"];
       const tarExts = ["tar", "tar.gz", "tgz", "tar.bz2", "tbz2", "tar.xz", "txz", "tar.7z", "t7z"];
       if (isZstdAvailable()) { exts.push("tar.zst", "tzst"); tarExts.push("tar.zst", "tzst"); }
       return [
@@ -68,6 +69,9 @@
         { name: "ZIP Archives", extensions: ["zip"] },
         { name: "7z Archives", extensions: ["7z"] },
         { name: "RAR Archives", extensions: ["rar"] },
+        { name: "JAR Archives", extensions: ["jar"] },
+        { name: "Disk Images", extensions: ["dmg", "iso"] },
+        { name: "Packages", extensions: ["deb", "rpm"] },
         { name: "TAR Archives", extensions: tarExts },
       ];
     }
@@ -92,6 +96,10 @@
     let lastClickedIdx = -1;
     let collapsedPaths = new Set();
     let dirty = false;
+
+    function isReadOnly() {
+      return archive && ["rar", "deb", "rpm", "dmg", "iso"].includes(archive.format);
+    }
 
     function setDirty(val) {
       dirty = val;
@@ -124,7 +132,7 @@
     }
 
     async function saveZip() {
-      await archive.save(archivePath, updateProgress);
+      await archive.save(archivePath, updateProgress, updateProgressLabel);
     }
 
     function refreshZip() {
@@ -257,6 +265,24 @@
       return idx < 0 ? "" : trimmed.slice(0, idx + 1);
     }
 
+    async function pruneEmptyDirs() {
+      let changed = true;
+      while (changed) {
+        changed = false;
+        const entries = archive.getEntries();
+        const dirs = entries.filter((e) => e.isDirectory);
+        for (const dir of dirs) {
+          const hasChildren = entries.some((e) => e.entryName !== dir.entryName && e.entryName.startsWith(dir.entryName));
+          if (!hasChildren) {
+            archive.deleteFile(dir.entryName);
+            changed = true;
+            break;
+          }
+        }
+        if (changed) await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+
     function buildVisibleList() {
       if (!archive) return [];
       const entries = archive.getEntries();
@@ -311,14 +337,16 @@
       visibleEntries.forEach((entry, idx) => {
         const tr = document.createElement("tr");
         tr.dataset.path = entry.entryName;
-        tr.draggable = true;
+        tr.draggable = !isReadOnly();
         if (selectedPaths.has(entry.entryName)) tr.classList.add("selected");
         tr.addEventListener("dragstart", (e) => {
+          if (isReadOnly()) { e.preventDefault(); return; }
           const paths = selectedPaths.has(entry.entryName) ? [...selectedPaths] : [entry.entryName];
           e.dataTransfer.setData("application/x-archivesphinx-entry", JSON.stringify(paths));
           e.dataTransfer.effectAllowed = "move";
         });
         tr.addEventListener("dragover", (e) => {
+          if (isReadOnly()) return;
           if (e.dataTransfer.types.includes("application/x-archivesphinx-entry")) {
             e.preventDefault();
             e.dataTransfer.dropEffect = "move";
@@ -332,6 +360,7 @@
         tr.addEventListener("dragleave", () => tr.classList.remove("drop-target"));
         tr.addEventListener("drop", async (e) => {
           tr.classList.remove("drop-target");
+          if (isReadOnly()) return;
           const raw = e.dataTransfer.getData("application/x-archivesphinx-entry");
           if (raw) {
             e.preventDefault();
@@ -552,20 +581,21 @@
       const hasSelection = selectedPaths.size > 0;
       const selectionIsFolder = hasSelection && [...selectedPaths].every((p) => p.endsWith("/"));
       const canNewFolder = hasArchive && (!hasSelection || selectionIsFolder);
-      document.getElementById("btn-save").disabled = saving || !hasArchive || !dirty;
+      const ro = isReadOnly();
+      document.getElementById("btn-save").disabled = saving || !hasArchive || !dirty || ro;
       document.getElementById("btn-saveas").disabled = saving || !hasArchive;
-      document.getElementById("btn-add").disabled = saving || !hasArchive;
-      document.getElementById("btn-folder").disabled = saving || !canNewFolder;
-      document.getElementById("btn-delete").disabled = saving || !hasArchive || !hasSelection;
+      document.getElementById("btn-add").disabled = saving || !hasArchive || ro;
+      document.getElementById("btn-folder").disabled = saving || !canNewFolder || ro;
+      document.getElementById("btn-delete").disabled = saving || !hasArchive || !hasSelection || ro;
       document.getElementById("btn-extract").disabled = saving || !hasArchive;
       document.getElementById("btn-test").disabled = saving || !hasArchive;
-      document.getElementById("btn-clean").disabled = saving || !hasArchive;
+      document.getElementById("btn-clean").disabled = saving || !hasArchive || ro;
       document.getElementById("btn-extract").textContent = hasSelection ? "📥 Extract Selected" : "📥 Extract All";
       ipcRenderer.invoke("update-menu-state", {
         hasArchive: !saving && hasArchive,
-        canSave: !saving && hasArchive && dirty,
+        canSave: !saving && hasArchive && dirty && !ro,
         hasSelection: !saving && hasSelection,
-        canNewFolder: !saving && canNewFolder,
+        canNewFolder: !saving && canNewFolder && !ro,
       });
     }
 
@@ -610,6 +640,13 @@
       document.getElementById("progress-track").classList.remove("active");
       document.getElementById("progress-bar").style.display = "";
       document.body.style.cursor = "";
+    }
+
+    function updateProgressLabel(msg) {
+      document.getElementById("progress-label").textContent = msg;
+      document.getElementById("progress-bar").style.display = "none";
+      document.getElementById("progress-track").classList.add("active");
+      document.getElementById("progress-count").textContent = "";
     }
 
     // Archive operations
@@ -735,6 +772,42 @@
         for (const entry of archive.entries) {
           newArchiveObj.entries.push({ ...entry });
         }
+      } else if (newArchiveObj.format === "7z") {
+        // 7z: extract source to temp dir, then archive directly (avoids memory buffering)
+        const os = require("os");
+        const tempDir = path.join(os.tmpdir(), "archivesphinx-saveas-" + Date.now());
+        fs.mkdirSync(tempDir, { recursive: true });
+        try {
+          updateProgressLabel("Extracting…");
+          await new Promise((r) => setTimeout(r, 0));
+          await archive.extractAll(tempDir, updateProgress);
+          updateProgressLabel("Compressing…");
+          await new Promise((r) => setTimeout(r, 0));
+          if (fs.existsSync(result)) fs.unlinkSync(result);
+          const { spawn } = require("child_process");
+          const { getSevenZipPath } = require("./archive");
+          await new Promise((resolve, reject) => {
+            const proc = spawn(getSevenZipPath(), ["a", "-t7z", result, path.join(tempDir, "*")], { stdio: ["ignore", "pipe", "pipe"] });
+            proc.on("close", (code) => code === 0 ? resolve() : reject(new Error("7z compression failed")));
+            proc.on("error", reject);
+          });
+        } finally {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+        updateProgressLabel("Reloading…");
+        await new Promise((r) => setTimeout(r, 0));
+        ipcRenderer.invoke("unregister-open-file", archivePath);
+        archivePath = result;
+        archive = newArchiveObj;
+        await archive.open(archivePath, updateProgress);
+        saving = false;
+        ipcRenderer.invoke("set-saving", false);
+        hideProgress();
+        ipcRenderer.invoke("register-open-file", archivePath);
+        setDirty(false);
+        updatePathBar();
+        render();
+        return;
       } else {
         for (const entry of archive.getEntries()) {
           if (entry.isDirectory) {
@@ -747,6 +820,14 @@
               if (data) newArchiveObj.addFile(entry.entryName, data);
               else copySkipped.push(entry.entryName + " (no data)");
             } catch (err) {
+              if (err.message && err.message.includes("allocate memory")) {
+                ipcRenderer.invoke("show-message", { type: "error", title: "Save Failed", message: "Ran out of memory while copying entries.\nThe archive is too large for " + newArchiveObj.format.toUpperCase() + " format.\nUse a TAR-based format instead." });
+                saving = false;
+                ipcRenderer.invoke("set-saving", false);
+                hideProgress();
+                render();
+                return;
+              }
               copySkipped.push(entry.entryName + " (" + err.message + ")");
             }
           }
@@ -834,31 +915,31 @@
       }
     }
 
-    function deleteSelected() {
+    async function deleteSelected() {
       if (!archive || saving || selectedPaths.size === 0) return;
       saving = true;
       ipcRenderer.invoke("set-saving", true);
       showProgress("Deleting…", true);
       updateToolbar();
-      setTimeout(() => {
-        try {
-          [...selectedPaths].forEach((p) => {
-            if (p.endsWith("/")) {
-              archive.getEntries()
-                .filter((e) => e.entryName.startsWith(p) && e.entryName !== p)
-                .forEach((e) => archive.deleteFile(e.entryName));
-            }
-            archive.deleteFile(p);
-          });
-          selectedPaths.clear();
-          setDirty(true);
-        } finally {
-          saving = false;
-          ipcRenderer.invoke("set-saving", false);
-          hideProgress();
-          render();
-        }
-      }, 0);
+      await new Promise((r) => setTimeout(r, 0));
+      try {
+        [...selectedPaths].forEach((p) => {
+          if (p.endsWith("/")) {
+            archive.getEntries()
+              .filter((e) => e.entryName.startsWith(p) && e.entryName !== p)
+              .forEach((e) => archive.deleteFile(e.entryName));
+          }
+          archive.deleteFile(p);
+        });
+        await pruneEmptyDirs();
+        selectedPaths.clear();
+        setDirty(true);
+      } finally {
+        saving = false;
+        ipcRenderer.invoke("set-saving", false);
+        hideProgress();
+        render();
+      }
     }
 
     async function extractSelected() {
@@ -869,21 +950,33 @@
       });
       if (!result || !result[0]) return;
       const dest = result[0];
-      if (selectedPaths.size === 0) {
-        archive.extractAll(dest);
-      } else {
-        [...selectedPaths].forEach((p) => {
-          const entry = archive.getEntry(p);
-          if (entry) {
-            if (entry.isDirectory) {
-              archive.getEntries()
-                .filter((e) => e.entryName.startsWith(p))
-                .forEach((e) => archive.extractEntry(e.entryName, dest));
-            } else {
-              archive.extractEntry(p, dest);
+      saving = true;
+      ipcRenderer.invoke("set-saving", true);
+      showProgress("Extracting…", true);
+      updateToolbar();
+      await new Promise((r) => setTimeout(r, 0));
+      try {
+        if (selectedPaths.size === 0) {
+          await archive.extractAll(dest);
+        } else {
+          [...selectedPaths].forEach((p) => {
+            const entry = archive.getEntry(p);
+            if (entry) {
+              if (entry.isDirectory) {
+                archive.getEntries()
+                  .filter((e) => e.entryName.startsWith(p))
+                  .forEach((e) => archive.extractEntry(e.entryName, dest));
+              } else {
+                archive.extractEntry(p, dest);
+              }
             }
-          }
-        });
+          });
+        }
+      } finally {
+        saving = false;
+        ipcRenderer.invoke("set-saving", false);
+        hideProgress();
+        render();
       }
     }
 
@@ -900,7 +993,7 @@
       });
     }
 
-    function cleanMacOS() {
+    async function cleanMacOS() {
       if (!archive || saving) return;
       const toDelete = archive.getEntries()
         .filter((e) => {
@@ -913,19 +1006,25 @@
       ipcRenderer.invoke("set-saving", true);
       showProgress("Cleaning…", true);
       updateToolbar();
-      setTimeout(() => {
-        try {
-          toDelete.forEach((p) => archive.deleteFile(p));
-          refreshZip();
-          selectedPaths.clear();
-          setDirty(true);
-        } finally {
-          saving = false;
-          ipcRenderer.invoke("set-saving", false);
-          hideProgress();
-          render();
+      await new Promise((r) => setTimeout(r, 0));
+      try {
+        for (let i = 0; i < toDelete.length; i++) {
+          archive.deleteFile(toDelete[i]);
+          if (i % 100 === 0) {
+            updateProgress(i + 1, toDelete.length);
+            await new Promise((r) => setTimeout(r, 0));
+          }
         }
-      }, 0);
+        await pruneEmptyDirs();
+        refreshZip();
+        selectedPaths.clear();
+        setDirty(true);
+      } finally {
+        saving = false;
+        ipcRenderer.invoke("set-saving", false);
+        hideProgress();
+        render();
+      }
     }
 
     // Prevent Electron from navigating when files are dropped outside the tree
@@ -947,6 +1046,7 @@
     });
 
     treeContainer.addEventListener("dragover", (e) => {
+      if (isReadOnly()) return;
       if (e.dataTransfer.types.includes("application/x-archivesphinx-entry")) {
         e.preventDefault();
         e.dataTransfer.dropEffect = "move";
@@ -957,6 +1057,7 @@
       e.dataTransfer.dropEffect = "copy";
     });
     treeContainer.addEventListener("drop", async (e) => {
+      if (isReadOnly()) return;
       const raw = e.dataTransfer.getData("application/x-archivesphinx-entry");
       if (raw) {
         e.preventDefault();
@@ -1122,8 +1223,18 @@
       render();
     });
 
+    ipcRenderer.on("tar-save-progress", (_e, current, total) => {
+      updateProgress(current, total);
+    });
+
     ipcRenderer.on("request-save", async () => {
       await saveArchive();
+    });
+
+    window.addEventListener("unhandledrejection", (e) => {
+      const msg = e.reason?.message || String(e.reason);
+      ipcRenderer.invoke("show-message", { type: "error", title: "Unexpected Error", message: msg });
+      if (saving) { saving = false; ipcRenderer.invoke("set-saving", false); hideProgress(); render(); }
     });
 
     // Init

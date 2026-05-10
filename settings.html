@@ -10,7 +10,7 @@
       font-family: -apple-system, sans-serif;
       background: #1e1e1e;
       color: #e0e0e0;
-      padding: 24px;
+      padding: 20px;
       display: flex;
       flex-direction: column;
       height: 100vh;
@@ -29,10 +29,10 @@
       padding: 8px 10px;
       font-size: 14px;
       outline: none;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }
     input[type="color"] { height: 32px; padding: 2px; cursor: pointer; }
-    .color-row { display: flex; gap: 10px; margin-bottom: 12px; }
+    .color-row { display: flex; gap: 10px; margin-bottom: 10px; }
     .color-field { flex: 1; }
     .color-field label { margin-bottom: 4px; }
     .color-field input { width: 100%; }
@@ -65,16 +65,34 @@
     </div>
   </div>
 
+  <label for="gzip-path">Gzip Executable Path <small>(leave empty to autodetect)</small></label>
+  <div style="display:flex;gap:6px;margin-bottom:10px;">
+    <input type="text" id="gzip-path" placeholder="auto-detect" style="margin-bottom:0;flex:1;">
+    <button id="browse-gzip" style="padding:6px 12px;background:#3a3a3c;color:#e0e0e0;border:1px solid #555;border-radius:8px;cursor:pointer;white-space:nowrap;">Browse…</button>
+  </div>
+
+  <label for="bzip2-path">Bzip2 Executable Path <small>(leave empty to autodetect)</small></label>
+  <div style="display:flex;gap:6px;margin-bottom:10px;">
+    <input type="text" id="bzip2-path" placeholder="auto-detect" style="margin-bottom:0;flex:1;">
+    <button id="browse-bzip2" style="padding:6px 12px;background:#3a3a3c;color:#e0e0e0;border:1px solid #555;border-radius:8px;cursor:pointer;white-space:nowrap;">Browse…</button>
+  </div>
+
+  <label for="xz-path">XZ Executable Path <small>(leave empty to autodetect)</small></label>
+  <div style="display:flex;gap:6px;margin-bottom:10px;">
+    <input type="text" id="xz-path" placeholder="auto-detect" style="margin-bottom:0;flex:1;">
+    <button id="browse-xz" style="padding:6px 12px;background:#3a3a3c;color:#e0e0e0;border:1px solid #555;border-radius:8px;cursor:pointer;white-space:nowrap;">Browse…</button>
+  </div>
+
   <label for="zstd-path">Zstandard (zstd) Executable Path <small>(leave empty to autodetect)</small></label>
-  <div style="display:flex;gap:6px;margin-bottom:12px;">
+  <div style="display:flex;gap:6px;margin-bottom:10px;">
     <input type="text" id="zstd-path" placeholder="auto-detect" style="margin-bottom:0;flex:1;">
     <button id="browse-zstd" style="padding:6px 12px;background:#3a3a3c;color:#e0e0e0;border:1px solid #555;border-radius:8px;cursor:pointer;white-space:nowrap;">Browse…</button>
   </div>
 
-  <label for="bzip2-path">Bzip2 Executable Path <small>(leave empty to autodetect)</small></label>
-  <div style="display:flex;gap:6px;margin-bottom:12px;">
-    <input type="text" id="bzip2-path" placeholder="auto-detect" style="margin-bottom:0;flex:1;">
-    <button id="browse-bzip2" style="padding:6px 12px;background:#3a3a3c;color:#e0e0e0;border:1px solid #555;border-radius:8px;cursor:pointer;white-space:nowrap;">Browse…</button>
+  <label for="7z-path">7-Zip (7z) Executable Path <small>(leave empty to autodetect)</small></label>
+  <div style="display:flex;gap:6px;margin-bottom:10px;">
+    <input type="text" id="7z-path" placeholder="auto-detect" style="margin-bottom:0;flex:1;">
+    <button id="browse-7z" style="padding:6px 12px;background:#3a3a3c;color:#e0e0e0;border:1px solid #555;border-radius:8px;cursor:pointer;white-space:nowrap;">Browse…</button>
   </div>
 
   <div class="row">
@@ -99,6 +117,15 @@
     const BZIP2_PATHS = process.platform === "win32"
       ? ["C:\\Program Files\\bzip2\\bzip2.exe", "C:\\Program Files (x86)\\GnuWin32\\bin\\bzip2.exe"]
       : ["/opt/homebrew/bin/bzip2", "/usr/local/bin/bzip2", "/usr/bin/bzip2"];
+    const GZIP_PATHS = process.platform === "win32"
+      ? ["C:\\Program Files\\pigz\\pigz.exe", "C:\\Program Files\\GnuWin32\\bin\\gzip.exe", "C:\\Program Files\\Git\\usr\\bin\\gzip.exe"]
+      : ["/opt/homebrew/bin/pigz", "/usr/local/bin/pigz", "/usr/bin/pigz", "/usr/bin/gzip", "/opt/homebrew/bin/gzip", "/usr/local/bin/gzip"];
+    const XZ_PATHS = process.platform === "win32"
+      ? ["C:\\Program Files\\xz\\xz.exe", "C:\\Program Files\\Git\\usr\\bin\\xz.exe"]
+      : ["/usr/bin/xz", "/opt/homebrew/bin/xz", "/usr/local/bin/xz"];
+    const SEVENZIP_PATHS = process.platform === "win32"
+      ? ["C:\\Program Files\\7-Zip\\7z.exe", "C:\\Program Files (x86)\\7-Zip\\7z.exe"]
+      : ["/opt/homebrew/bin/7z", "/usr/local/bin/7z", "/usr/bin/7z", "/opt/homebrew/bin/7zz", "/usr/local/bin/7zz"];
 
     let current = {};
 
@@ -108,6 +135,9 @@
       document.getElementById("btn-color").value = settings.buttonColor || "#0000FF";
       document.getElementById("zstd-path").value = settings.zstdPath || detectTool("zstd", ZSTD_PATHS);
       document.getElementById("bzip2-path").value = settings.bzip2Path || detectTool("bzip2", BZIP2_PATHS);
+      document.getElementById("gzip-path").value = settings.gzipPath || detectTool("pigz", GZIP_PATHS) || detectTool("gzip", GZIP_PATHS);
+      document.getElementById("xz-path").value = settings.xzPath || detectTool("xz", XZ_PATHS);
+      document.getElementById("7z-path").value = settings.sevenZipPath || detectTool("7z", SEVENZIP_PATHS);
     });
 
     document.getElementById("save-btn").addEventListener("click", () => {
@@ -115,6 +145,9 @@
       current.buttonColor = document.getElementById("btn-color").value;
       current.zstdPath = document.getElementById("zstd-path").value.trim();
       current.bzip2Path = document.getElementById("bzip2-path").value.trim();
+      current.gzipPath = document.getElementById("gzip-path").value.trim();
+      current.xzPath = document.getElementById("xz-path").value.trim();
+      current.sevenZipPath = document.getElementById("7z-path").value.trim();
       ipcRenderer.invoke("settings-save", current);
     });
 
@@ -130,6 +163,21 @@
     document.getElementById("browse-bzip2").addEventListener("click", async () => {
       const result = await ipcRenderer.invoke("browse-file");
       if (result) document.getElementById("bzip2-path").value = result;
+    });
+
+    document.getElementById("browse-gzip").addEventListener("click", async () => {
+      const result = await ipcRenderer.invoke("browse-file");
+      if (result) document.getElementById("gzip-path").value = result;
+    });
+
+    document.getElementById("browse-xz").addEventListener("click", async () => {
+      const result = await ipcRenderer.invoke("browse-file");
+      if (result) document.getElementById("xz-path").value = result;
+    });
+
+    document.getElementById("browse-7z").addEventListener("click", async () => {
+      const result = await ipcRenderer.invoke("browse-file");
+      if (result) document.getElementById("7z-path").value = result;
     });
   </script>
 </body>

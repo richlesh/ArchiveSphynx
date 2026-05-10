@@ -44,6 +44,7 @@ function wasBzip2FallbackUsed() { const v = bzip2FallbackUsed; bzip2FallbackUsed
 function detectFormat(filePath) {
   const lower = filePath.toLowerCase();
   if (lower.endsWith(".zip")) return "zip";
+  if (lower.endsWith(".jar")) return "jar";
   if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) return "tar.gz";
   if (lower.endsWith(".tar.bz2") || lower.endsWith(".tbz2")) return "tar.bz2";
   if (lower.endsWith(".tar.xz") || lower.endsWith(".txz")) return "tar.xz";
@@ -52,6 +53,10 @@ function detectFormat(filePath) {
   if (lower.endsWith(".tar")) return "tar";
   if (lower.endsWith(".7z")) return "7z";
   if (lower.endsWith(".rar")) return "rar";
+  if (lower.endsWith(".deb")) return "deb";
+  if (lower.endsWith(".rpm")) return "rpm";
+  if (lower.endsWith(".dmg")) return "dmg";
+  if (lower.endsWith(".iso")) return "iso";
   return null;
 }
 
@@ -184,23 +189,60 @@ class TarArchive {
       const os = require("os");
       this._tempFile = path.join(os.tmpdir(), "archivesphinx-" + Date.now() + ".tar");
       if (this.compression === "7z") {
-        const { spawnSync } = require("child_process");
+        const { spawn } = require("child_process");
         const outFd = fs.openSync(this._tempFile, "w");
-        spawnSync(getSevenZipPath(), ["e", "-so", filePath], { stdio: ["ignore", outFd, "pipe"] });
-        fs.closeSync(outFd);
-      } else {
-        const buf = fs.readFileSync(filePath);
-        let tarBuf;
-        if (this.compression === "xz") {
-          tarBuf = await new Promise((resolve, reject) => {
+        await new Promise((resolve, reject) => {
+          const proc = spawn(getSevenZipPath(), ["e", "-so", filePath], { stdio: ["ignore", outFd, "pipe"] });
+          proc.on("close", (code) => { fs.closeSync(outFd); code === 0 ? resolve() : reject(new Error("7z decompression failed")); });
+          proc.on("error", (err) => { fs.closeSync(outFd); reject(err); });
+        });
+      } else if (this.compression === "gz") {
+        const { spawn } = require("child_process");
+        const outFd = fs.openSync(this._tempFile, "w");
+        await new Promise((resolve, reject) => {
+          const proc = spawn(getGzipPath(), ["-d", "-c", filePath], { stdio: ["ignore", outFd, "pipe"] });
+          proc.on("close", (code) => { fs.closeSync(outFd); code === 0 ? resolve() : reject(new Error("gzip decompression failed")); });
+          proc.on("error", (err) => { fs.closeSync(outFd); reject(err); });
+        });
+      } else if (this.compression === "bz2") {
+        const { spawn } = require("child_process");
+        const outFd = fs.openSync(this._tempFile, "w");
+        const ok = await new Promise((resolve, reject) => {
+          const proc = spawn(getBzip2Path(), ["-d", "-c", filePath], { stdio: ["ignore", outFd, "pipe"] });
+          proc.on("close", (code) => { fs.closeSync(outFd); resolve(code === 0); });
+          proc.on("error", () => { fs.closeSync(outFd); resolve(false); });
+        });
+        if (!ok) {
+          const buf = fs.readFileSync(filePath);
+          fs.writeFileSync(this._tempFile, Buffer.from(bzip2.decompressFile(buf)));
+        }
+      } else if (this.compression === "xz") {
+        const { spawn } = require("child_process");
+        const outFd = fs.openSync(this._tempFile, "w");
+        const ok = await new Promise((resolve) => {
+          const proc = spawn(getXzPath(), ["-d", "-c", filePath], { stdio: ["ignore", outFd, "pipe"] });
+          proc.on("close", (code) => { fs.closeSync(outFd); resolve(code === 0); });
+          proc.on("error", () => { fs.closeSync(outFd); resolve(false); });
+        });
+        if (!ok) {
+          const buf = fs.readFileSync(filePath);
+          const tarBuf = await new Promise((resolve, reject) => {
             lzma.decompress(buf, (result, err) => { if (err) reject(err); else resolve(result); });
           });
-        } else if (this.compression === "zst") {
-          tarBuf = Buffer.from(fzstd.decompress(buf));
-        } else {
-          tarBuf = this._decompress(buf);
+          fs.writeFileSync(this._tempFile, tarBuf);
         }
-        fs.writeFileSync(this._tempFile, tarBuf);
+      } else if (this.compression === "zst") {
+        const { spawn } = require("child_process");
+        const outFd = fs.openSync(this._tempFile, "w");
+        const ok = await new Promise((resolve) => {
+          const proc = spawn(getZstdPath(), ["-d", "-c", filePath], { stdio: ["ignore", outFd, "pipe"] });
+          proc.on("close", (code) => { fs.closeSync(outFd); resolve(code === 0); });
+          proc.on("error", () => { fs.closeSync(outFd); resolve(false); });
+        });
+        if (!ok) {
+          const buf = fs.readFileSync(filePath);
+          fs.writeFileSync(this._tempFile, Buffer.from(fzstd.decompress(buf)));
+        }
       }
       this._sourceFile = this._tempFile;
     }
@@ -235,80 +277,123 @@ class TarArchive {
     }
   }
 
-  _parseOffsets(onProgress) {
+  async _parseOffsets(onProgress) {
     const sourceFile = this._sourceFile;
-    return new Promise((resolve, reject) => {
-      const extract = tar.extract();
-      let count = 0;
-      // Track position by accumulating consumed bytes
-      let pos = 0;
-      extract.on("entry", (header, stream, next) => {
-        const entryName = header.name + (header.type === "directory" && !header.name.endsWith("/") ? "/" : "");
-        const isDir = header.type === "directory";
-        const dataSize = header.size || 0;
-        // Consume stream to count actual bytes and find where data lives
-        let dataBytes = 0;
-        stream.on("data", (chunk) => { dataBytes += chunk.length; });
-        stream.on("end", () => {
-          // The data we just consumed is at (current file position - dataBytes) 
-          // But we don't have exact file position. Use a different approach:
-          // Store entry with null offset, then fix up after
-          this.entries.push({
-            entryName,
-            isDirectory: isDir,
-            size: dataSize,
-            time: header.mtime || null,
-            mode: header.mode || 0,
-            data: null,
-            sourceFile: isDir ? null : sourceFile,
-            offset: 0, // will be fixed
-            linkname: header.linkname || null,
-            type: header.type || (isDir ? "directory" : "file"),
-          });
-          count++;
-          if (onProgress) onProgress(count, 0);
-          next();
-        });
-        stream.resume();
-      });
-      extract.on("finish", () => {
-        // Fix offsets by scanning the file structure
-        let filePos = 0;
-        const fd = fs.openSync(sourceFile, "r");
-        const hdrBuf = Buffer.alloc(512);
-        let entryIdx = 0;
-        while (entryIdx < this.entries.length) {
-          fs.readSync(fd, hdrBuf, 0, 512, filePos);
-          const name = hdrBuf.toString("utf8", 0, 100).replace(/\0.*/g, "");
-          const type = String.fromCharCode(hdrBuf[156]);
-          const hdrSize = parseInt(hdrBuf.toString("utf8", 124, 136).trim(), 8) || 0;
-          const paddedSize = Math.ceil(hdrSize / 512) * 512;
-          filePos += 512;
-          if (type === "L" || type === "K") {
-            // GNU long name/link — skip the data, next header is the real entry
-            filePos += paddedSize;
-            continue;
-          }
-          if (name === "" && hdrSize === 0) break; // end of archive
-          // This is a real entry — assign offset
-          if (entryIdx < this.entries.length) {
-            this.entries[entryIdx].offset = filePos;
-          }
-          filePos += paddedSize;
-          entryIdx++;
+    const fd = fs.openSync(sourceFile, "r");
+    const hdrBuf = Buffer.alloc(512);
+    let filePos = 0;
+    let count = 0;
+    const stat = fs.fstatSync(fd);
+    const fileSize = stat.size;
+    let longName = null;
+    let longLink = null;
+    let paxAttrs = null;
+
+    while (filePos + 512 <= fileSize) {
+      const bytesRead = fs.readSync(fd, hdrBuf, 0, 512, filePos);
+      if (bytesRead < 512) break;
+
+      // Check for end-of-archive (two zero blocks)
+      let allZero = true;
+      for (let j = 0; j < 512; j++) { if (hdrBuf[j] !== 0) { allZero = false; break; } }
+      if (allZero) break;
+
+      const type = String.fromCharCode(hdrBuf[156]);
+      const hdrSize = parseInt(hdrBuf.toString("utf8", 124, 136).trim(), 8) || 0;
+      const paddedSize = Math.ceil(hdrSize / 512) * 512;
+      filePos += 512;
+
+      // GNU long name/link extension headers
+      if (type === "L") {
+        if (hdrSize > 0) {
+          const nameBuf = Buffer.alloc(hdrSize);
+          fs.readSync(fd, nameBuf, 0, hdrSize, filePos);
+          longName = nameBuf.toString("utf8").replace(/\0+$/, "");
         }
-        fs.closeSync(fd);
-        if (onProgress) onProgress(count, count);
-        resolve();
+        filePos += paddedSize;
+        continue;
+      }
+      if (type === "K") {
+        if (hdrSize > 0) {
+          const linkBuf = Buffer.alloc(hdrSize);
+          fs.readSync(fd, linkBuf, 0, hdrSize, filePos);
+          longLink = linkBuf.toString("utf8").replace(/\0+$/, "");
+        }
+        filePos += paddedSize;
+        continue;
+      }
+
+      // PAX extended headers (per-entry 'x' or global 'g')
+      if (type === "x" || type === "g") {
+        if (hdrSize > 0) {
+          const paxBuf = Buffer.alloc(hdrSize);
+          fs.readSync(fd, paxBuf, 0, hdrSize, filePos);
+          if (type === "x") {
+            paxAttrs = {};
+            const paxStr = paxBuf.toString("utf8");
+            const lines = paxStr.split("\n");
+            for (const line of lines) {
+              const m = line.match(/^\d+ ([^=]+)=(.*)/);
+              if (m) paxAttrs[m[1]] = m[2];
+            }
+          }
+        }
+        filePos += paddedSize;
+        continue;
+      }
+
+      // Parse entry name
+      let entryName;
+      if (paxAttrs && paxAttrs.path) {
+        entryName = paxAttrs.path;
+      } else if (longName) {
+        entryName = longName;
+      } else {
+        const prefix = hdrBuf.toString("utf8", 345, 500).replace(/\0.*/g, "");
+        const name = hdrBuf.toString("utf8", 0, 100).replace(/\0.*/g, "");
+        entryName = prefix ? prefix + "/" + name : name;
+      }
+
+      const isDir = type === "5" || (type === "0" && entryName.endsWith("/"));
+      if (isDir && !entryName.endsWith("/")) entryName += "/";
+
+      const mode = parseInt(hdrBuf.toString("utf8", 100, 108).trim(), 8) || 0;
+      const mtime = paxAttrs && paxAttrs.mtime
+        ? Math.floor(parseFloat(paxAttrs.mtime))
+        : (parseInt(hdrBuf.toString("utf8", 136, 148).trim(), 8) || 0);
+      let linkname = longLink || (paxAttrs && paxAttrs.linkpath) || hdrBuf.toString("utf8", 157, 257).replace(/\0.*/g, "");
+
+      const entryType = type === "5" ? "directory" : type === "2" ? "symlink" : "file";
+
+      this.entries.push({
+        entryName,
+        isDirectory: isDir,
+        size: hdrSize,
+        time: mtime ? new Date(mtime * 1000) : null,
+        mode,
+        data: null,
+        sourceFile: isDir ? null : sourceFile,
+        offset: filePos,
+        linkname: linkname || null,
+        type: entryType,
       });
-      extract.on("error", reject);
-      const rs = fs.createReadStream(sourceFile, { highWaterMark: 64 * 1024 });
-      rs.on("error", reject);
-      rs.pipe(extract);
-    });
+
+      count++;
+      if (onProgress && count % 500 === 0) {
+        onProgress(count, 0);
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      filePos += paddedSize;
+      longName = null;
+      longLink = null;
+      paxAttrs = null;
+    }
+
+    fs.closeSync(fd);
+    if (onProgress) onProgress(count, count);
   }
 
-  async save(filePath, onProgress) {
+  async save(filePath, onProgress, onStatus) {
     const os = require("os");
     // Pack tar to a temp file (streaming, no memory buffering)
     if (this.compression === "none" && this._sourceFile !== filePath) {
@@ -324,39 +409,56 @@ class TarArchive {
     } else {
       // Compressed: pack to temp tar, then compress using CLI tools
       const tempTar = path.join(os.tmpdir(), "archivesphinx-pack-" + Date.now() + ".tar");
+      if (onStatus) { onStatus("Archiving…"); await new Promise((r) => setTimeout(r, 0)); }
       await this._packTarToFile(tempTar, onProgress);
-      const { spawnSync } = require("child_process");
-      let outFd = fs.openSync(filePath, "w");
-      let result;
-      if (this.compression === "gz") {
-        result = spawnSync(getGzipPath(), ["-c", tempTar], { stdio: ["ignore", outFd, "pipe"] });
+      if (onStatus) { onStatus("Compressing…"); await new Promise((r) => setTimeout(r, 0)); }
+      const { spawn, spawnSync } = require("child_process");
+      if (this.compression === "7z") {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        await new Promise((resolve, reject) => {
+          const proc = spawn(getSevenZipPath(), ["a", "-t7z", filePath, tempTar], { stdio: ["ignore", "pipe", "pipe"] });
+          proc.on("close", (code) => code === 0 ? resolve() : reject(new Error("7z compression failed")));
+          proc.on("error", reject);
+        });
       } else if (this.compression === "bz2") {
-        result = spawnSync(getBzip2Path(), ["-k", "-c", tempTar], { stdio: ["ignore", outFd, "pipe"] });
-        if (result.status !== 0) {
+        const outFd = fs.openSync(filePath, "w");
+        const ok = await new Promise((resolve, reject) => {
+          const proc = spawn(getBzip2Path(), ["-k", "-c", tempTar], { stdio: ["ignore", outFd, "pipe"] });
+          proc.on("close", (code) => { fs.closeSync(outFd); resolve(code === 0); });
+          proc.on("error", () => { fs.closeSync(outFd); resolve(false); });
+        });
+        if (!ok) {
           bzip2FallbackUsed = true;
-          fs.closeSync(outFd);
           const tarBuf = fs.readFileSync(tempTar);
           fs.writeFileSync(filePath, Buffer.from(bzip2.compressFile(tarBuf)));
           fs.unlinkSync(tempTar);
           return;
         }
-      } else if (this.compression === "xz") {
-        result = spawnSync(getXzPath(), ["-c", tempTar], { stdio: ["ignore", outFd, "pipe"] });
-      } else if (this.compression === "zst") {
-        result = spawnSync(getZstdPath(), ["-c", "--no-progress", "-3", tempTar], { stdio: ["ignore", outFd, "pipe"] });
-      } else if (this.compression === "7z") {
-        // 7z cannot stream to stdout; write directly to file
-        fs.closeSync(outFd);
-        outFd = null;
-        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-        result = spawnSync(getSevenZipPath(), ["a", "-t7z", filePath, tempTar], { stdio: ["ignore", "pipe", "pipe"] });
+      } else {
+        // gz, xz, zst — use async spawn to keep event loop alive
+        let cmd, args;
+        if (this.compression === "gz") { cmd = getGzipPath(); args = ["-c", tempTar]; }
+        else if (this.compression === "xz") { cmd = getXzPath(); args = ["-c", tempTar]; }
+        else if (this.compression === "zst") { cmd = getZstdPath(); args = ["-c", "--no-progress", "-3", tempTar]; }
+        const outFd = fs.openSync(filePath, "w");
+        await new Promise((resolve, reject) => {
+          const proc = spawn(cmd, args, { stdio: ["ignore", outFd, "pipe"] });
+          proc.on("close", (code) => { fs.closeSync(outFd); code === 0 ? resolve() : reject(new Error("Compression failed")); });
+          proc.on("error", (err) => { fs.closeSync(outFd); reject(err); });
+        });
       }
-      if (outFd !== null) fs.closeSync(outFd);
-      fs.unlinkSync(tempTar);
+      // Keep tempTar as the working copy for offset access (skip decompression)
+      if (this._tempFile) { try { fs.unlinkSync(this._tempFile); } catch {} }
+      this._tempFile = tempTar;
+      this._sourceFile = tempTar;
+      this.entries = [];
+      if (onStatus) { onStatus("Reloading…"); await new Promise((r) => setTimeout(r, 0)); }
+      return this._parseOffsets(onProgress);
     }
 
     await new Promise((r) => setTimeout(r, 0));
-    // Re-open with offsets
+    // Re-open with offsets (uncompressed tar only)
+    if (onStatus) { onStatus("Reloading…"); await new Promise((r) => setTimeout(r, 0)); }
     if (this._tempFile) { try { fs.unlinkSync(this._tempFile); } catch {} }
     this._tempFile = null;
     if (this.compression === "none") {
@@ -364,34 +466,9 @@ class TarArchive {
       if (this._sourceFile !== filePath) {
         this._sourceFile = filePath;
         this.entries = [];
-        return this._parseOffsets();
+        return this._parseOffsets(onProgress);
       }
       // else: already updated by the IPC handler's returned offsets
-    } else {
-      this._tempFile = path.join(os.tmpdir(), "archivesphinx-" + Date.now() + ".tar");
-      // Decompress to temp for offset access
-      if (this.compression === "7z") {
-        const { spawnSync } = require("child_process");
-        const outFd2 = fs.openSync(this._tempFile, "w");
-        spawnSync(getSevenZipPath(), ["e", "-so", filePath], { stdio: ["ignore", outFd2, "pipe"] });
-        fs.closeSync(outFd2);
-      } else {
-        const buf = fs.readFileSync(filePath);
-        let tarBuf2;
-        if (this.compression === "xz") {
-          tarBuf2 = await new Promise((resolve, reject) => {
-            lzma.decompress(buf, (result, err) => { if (err) reject(err); else resolve(result); });
-          });
-        } else if (this.compression === "zst") {
-          tarBuf2 = Buffer.from(fzstd.decompress(buf));
-        } else {
-          tarBuf2 = this._decompress(buf);
-        }
-        fs.writeFileSync(this._tempFile, tarBuf2);
-      }
-      this._sourceFile = this._tempFile;
-      this.entries = [];
-      return this._parseOffsets();
     }
   }
 
@@ -563,10 +640,16 @@ class TarArchive {
     }
   }
 
-  extractAll(dest) {
-    for (const entry of this.entries) {
-      this.extractEntry(entry.entryName, dest);
+  async extractAll(dest, onProgress) {
+    const total = this.entries.length;
+    for (let i = 0; i < total; i++) {
+      this.extractEntry(this.entries[i].entryName, dest);
+      if (onProgress && i % 100 === 0) {
+        onProgress(i + 1, total);
+        await new Promise((r) => setTimeout(r, 0));
+      }
     }
+    if (onProgress) onProgress(total, total);
   }
 
   testIntegrity() {
@@ -733,10 +816,14 @@ class SevenZipArchive {
     spawnSync(getSevenZipPath(), ["x", "-o" + dest, "-y", this._filePath, entryName.replace(/\//g, path.sep)], { stdio: ["ignore", "pipe", "pipe"] });
   }
 
-  extractAll(dest) {
+  async extractAll(dest) {
     if (!this._filePath) return;
-    const { spawnSync } = require("child_process");
-    spawnSync(getSevenZipPath(), ["x", "-o" + dest, "-y", this._filePath], { stdio: ["ignore", "pipe", "pipe"] });
+    const { spawn } = require("child_process");
+    await new Promise((resolve) => {
+      const proc = spawn(getSevenZipPath(), ["x", "-o" + dest, "-y", this._filePath], { stdio: ["ignore", "pipe", "pipe"] });
+      proc.on("close", resolve);
+      proc.on("error", resolve);
+    });
   }
 
   testIntegrity() {
@@ -867,11 +954,15 @@ class RarArchive {
     }
   }
 
-  extractAll(dest) {
+  async extractAll(dest) {
     if (!this._filePath) return;
-    const { spawnSync } = require("child_process");
-    let result = spawnSync(getSevenZipPath(), ["x", "-o" + dest, "-y", this._filePath], { stdio: ["ignore", "pipe", "pipe"] });
-    if (result.status !== 0) {
+    const { spawn, spawnSync } = require("child_process");
+    const code = await new Promise((resolve) => {
+      const proc = spawn(getSevenZipPath(), ["x", "-o" + dest, "-y", this._filePath], { stdio: ["ignore", "pipe", "pipe"] });
+      proc.on("close", resolve);
+      proc.on("error", () => resolve(1));
+    });
+    if (code !== 0) {
       spawnSync(getUnrarPath(), ["x", "-o+", this._filePath, dest + path.sep], { stdio: ["ignore", "pipe", "pipe"] });
     }
   }
@@ -885,6 +976,127 @@ class RarArchive {
     if (result.status === 0) return [];
     return ["Archive integrity test failed: " + (result.stderr || result.stdout || "unknown error")];
   }
+}
+
+// ─── JAR Backend (ZIP-based) ───
+
+class JarArchive extends ZipArchive {
+  constructor() {
+    super();
+    this.format = "jar";
+  }
+}
+
+// ─── Read-only 7z-based backend (shared by DEB, RPM, DMG, ISO) ───
+
+class SevenZipReadOnlyArchive {
+  constructor(format) {
+    this.entries = [];
+    this.format = format;
+    this._filePath = null;
+  }
+
+  create() {
+    throw new Error("Creating " + this.format.toUpperCase() + " archives is not supported.");
+  }
+
+  async open(filePath, onProgress) {
+    this._filePath = filePath;
+    this.entries = [];
+    const { spawnSync } = require("child_process");
+    const result = spawnSync(getSevenZipPath(), ["l", "-slt", filePath], { encoding: "utf8", maxBuffer: 100 * 1024 * 1024 });
+    if (result.status !== 0) throw new Error("Failed to list " + this.format + " archive: " + (result.stderr || "unknown error"));
+    const blocks = result.stdout.split(/\n\n/).filter((b) => b.includes("Path = "));
+    for (let i = 1; i < blocks.length; i++) {
+      const lines = blocks[i].split("\n");
+      const get = (key) => { const l = lines.find((ln) => ln.startsWith(key + " = ")); return l ? l.slice(key.length + 3) : ""; };
+      const entryPath = get("Path");
+      if (!entryPath) continue;
+      const isDir = get("Folder") === "+";
+      const entryName = entryPath.replace(/\\/g, "/") + (isDir ? "/" : "");
+      const size = parseInt(get("Size"), 10) || 0;
+      const compressed = parseInt(get("Packed Size"), 10) || 0;
+      const mtime = get("Modified") ? new Date(get("Modified")) : null;
+      const method = get("Method") || "";
+      this.entries.push({ entryName, isDirectory: isDir, size, compressedSize: compressed, time: mtime, method });
+      if (onProgress) onProgress(i, blocks.length - 1);
+    }
+  }
+
+  async save() {
+    throw new Error("Saving " + this.format.toUpperCase() + " archives is not supported. Use Save As to convert to a writable format.");
+  }
+
+  refresh() {}
+
+  getEntries() {
+    return this.entries.map((e) => ({
+      entryName: e.entryName,
+      isDirectory: e.isDirectory,
+      size: e.size,
+      compressedSize: e.compressedSize || 0,
+      time: e.time,
+      method: e.method || this.format.toUpperCase(),
+      attr: 0,
+    }));
+  }
+
+  addFile() { throw new Error("Cannot modify " + this.format.toUpperCase() + " archives."); }
+  deleteFile() { throw new Error("Cannot modify " + this.format.toUpperCase() + " archives."); }
+  renameEntry() { throw new Error("Cannot modify " + this.format.toUpperCase() + " archives."); }
+
+  getEntry(entryName) {
+    return this.entries.find((e) => e.entryName === entryName) || null;
+  }
+
+  getData(entryName) {
+    const entry = this.entries.find((e) => e.entryName === entryName);
+    if (!entry || entry.isDirectory) return null;
+    if (!this._filePath) return null;
+    const { spawnSync } = require("child_process");
+    const result = spawnSync(getSevenZipPath(), ["e", "-so", "-y", this._filePath, entryName.replace(/\//g, path.sep)], { stdio: ["ignore", "pipe", "pipe"], maxBuffer: Infinity });
+    return result.stdout || null;
+  }
+
+  extractEntry(entryName, dest) {
+    if (!this._filePath) return;
+    const { spawnSync } = require("child_process");
+    spawnSync(getSevenZipPath(), ["x", "-o" + dest, "-y", this._filePath, entryName.replace(/\//g, path.sep)], { stdio: ["ignore", "pipe", "pipe"] });
+  }
+
+  async extractAll(dest) {
+    if (!this._filePath) return;
+    const { spawn } = require("child_process");
+    await new Promise((resolve) => {
+      const proc = spawn(getSevenZipPath(), ["x", "-o" + dest, "-y", this._filePath], { stdio: ["ignore", "pipe", "pipe"] });
+      proc.on("close", resolve);
+      proc.on("error", resolve);
+    });
+  }
+
+  testIntegrity() {
+    if (!this._filePath) return [];
+    const { spawnSync } = require("child_process");
+    const result = spawnSync(getSevenZipPath(), ["t", this._filePath], { encoding: "utf8" });
+    if (result.status === 0) return [];
+    return ["Archive integrity test failed: " + (result.stderr || result.stdout || "unknown error")];
+  }
+}
+
+class DebArchive extends SevenZipReadOnlyArchive {
+  constructor() { super("deb"); }
+}
+
+class RpmArchive extends SevenZipReadOnlyArchive {
+  constructor() { super("rpm"); }
+}
+
+class DmgArchive extends SevenZipReadOnlyArchive {
+  constructor() { super("dmg"); }
+}
+
+class IsoArchive extends SevenZipReadOnlyArchive {
+  constructor() { super("iso"); }
 }
 
 // ─── Factory ───
@@ -901,6 +1113,11 @@ function createArchive(filePath) {
     case "tar.7z": return new TarArchive("7z");
     case "7z": return new SevenZipArchive();
     case "rar": return new RarArchive();
+    case "jar": return new JarArchive();
+    case "deb": return new DebArchive();
+    case "rpm": return new RpmArchive();
+    case "dmg": return new DmgArchive();
+    case "iso": return new IsoArchive();
     default: return null;
   }
 }
@@ -911,4 +1128,4 @@ function openArchive(filePath) {
   return archive;
 }
 
-module.exports = { detectFormat, createArchive, setZstdPath, setBzip2Path, setGzipPath, setXzPath, setSevenZipPath, setUnrarPath, isZstdAvailable, wasBzip2FallbackUsed, ZipArchive, TarArchive, SevenZipArchive, RarArchive };
+module.exports = { detectFormat, createArchive, setZstdPath, setBzip2Path, setGzipPath, setXzPath, setSevenZipPath, getSevenZipPath, setUnrarPath, isZstdAvailable, wasBzip2FallbackUsed, ZipArchive, TarArchive, SevenZipArchive, RarArchive, JarArchive, DebArchive, RpmArchive, DmgArchive, IsoArchive };
