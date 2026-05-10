@@ -240,6 +240,8 @@ class TarArchive {
             data: null,
             sourceFile: isDir ? null : sourceFile,
             offset: 0, // will be fixed
+            linkname: header.linkname || null,
+            type: header.type || (isDir ? "directory" : "file"),
           });
           count++;
           if (onProgress) onProgress(count, 0);
@@ -362,6 +364,8 @@ class TarArchive {
         offset: e.sourceFile ? e.offset : undefined,
         mtime: e.time ? e.time.toISOString() : null,
         mode: e.mode,
+        linkname: e.linkname || undefined,
+        type: e.type || undefined,
         data: (!e.isDirectory && e.data && !e.sourceFile) ? e.data.toString("base64") : undefined,
       }));
       fs.writeFileSync(entriesFile, JSON.stringify(entries));

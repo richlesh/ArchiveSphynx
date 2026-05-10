@@ -377,7 +377,12 @@ ipcMain.handle("tar-save", async (_e, { srcFile, entriesFile, outFile }) => {
     const mt = entry.mtime ? Math.floor(new Date(entry.mtime).getTime() / 1000) : 0;
     header.write(mt.toString(8).padStart(11, "0") + "\0", 136);
     header.write("        ", 148);
-    header[156] = entry.isDir ? 53 : 48;
+    // Type flag: '5'=dir, '2'=symlink, '0'=file
+    if (entry.isDir) header[156] = 53;
+    else if (entry.type === "symlink") header[156] = 50;
+    else header[156] = 48;
+    // Linkname for symlinks (bytes 157-256)
+    if (entry.linkname) header.write(entry.linkname.slice(0, 100), 157);
     header.write("ustar\0", 257);
     header.write("00", 263);
     let cksum = 0;
@@ -386,7 +391,7 @@ ipcMain.handle("tar-save", async (_e, { srcFile, entriesFile, outFile }) => {
     fsMod.writeSync(fdOut, header, 0, 512, outPos);
     outPos += 512;
     offsets.push(outPos); // data starts here
-    if (!entry.isDir && size > 0) {
+    if (!entry.isDir && entry.type !== "symlink" && size > 0) {
       if (entry.offset !== undefined && fdIn !== null) {
         let remaining = size;
         let srcPos = entry.offset;
