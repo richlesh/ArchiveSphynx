@@ -43,27 +43,31 @@
     const { ipcRenderer, webUtils } = require("electron");
     const path = require("path");
     const fs = require("fs");
-    const { createArchive, detectFormat, setZstdPath, setBzip2Path, isZstdAvailable, wasBzip2FallbackUsed } = require("./archive");
+    const { createArchive, detectFormat, setZstdPath, setBzip2Path, setGzipPath, setXzPath, setSevenZipPath, isZstdAvailable, wasBzip2FallbackUsed } = require("./archive");
 
     function getSaveFilters() {
       const filters = [
         { name: "ZIP Archives", extensions: ["zip"] },
+        { name: "7z Archives", extensions: ["7z"] },
         { name: "TAR Archives", extensions: ["tar"] },
         { name: "Compressed TAR (gzip)", extensions: ["tgz"] },
         { name: "Compressed TAR (bzip2)", extensions: ["tbz2"] },
         { name: "Compressed TAR (xz)", extensions: ["txz"] },
       ];
       if (isZstdAvailable()) filters.push({ name: "Compressed TAR (zstd)", extensions: ["tzst"] });
+      filters.push({ name: "Compressed TAR (7z)", extensions: ["t7z"] });
       return filters;
     }
 
     function getOpenFilters() {
-      const exts = ["zip", "tar", "tar.gz", "tgz", "tar.bz2", "tbz2", "tar.xz", "txz"];
-      const tarExts = ["tar", "tar.gz", "tgz", "tar.bz2", "tbz2", "tar.xz", "txz"];
+      const exts = ["zip", "7z", "rar", "tar", "tar.gz", "tgz", "tar.bz2", "tbz2", "tar.xz", "txz", "tar.7z", "t7z"];
+      const tarExts = ["tar", "tar.gz", "tgz", "tar.bz2", "tbz2", "tar.xz", "txz", "tar.7z", "t7z"];
       if (isZstdAvailable()) { exts.push("tar.zst", "tzst"); tarExts.push("tar.zst", "tzst"); }
       return [
         { name: "All Archives", extensions: exts },
         { name: "ZIP Archives", extensions: ["zip"] },
+        { name: "7z Archives", extensions: ["7z"] },
+        { name: "RAR Archives", extensions: ["rar"] },
         { name: "TAR Archives", extensions: tarExts },
       ];
     }
@@ -137,6 +141,9 @@
       if (settings.columnWidths) columnWidths = settings.columnWidths;
       if (settings.zstdPath) setZstdPath(settings.zstdPath);
       if (settings.bzip2Path) setBzip2Path(settings.bzip2Path);
+      if (settings.gzipPath) setGzipPath(settings.gzipPath);
+      if (settings.xzPath) setXzPath(settings.xzPath);
+      if (settings.sevenZipPath) setSevenZipPath(settings.sevenZipPath);
       applyColors(settings);
     }
 

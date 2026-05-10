@@ -274,7 +274,7 @@ function openSettings() {
   if (settingsWin) return settingsWin.focus();
   settingsWin = new BrowserWindow({
     width: 450,
-    height: 480,
+    height: 680,
     resizable: false,
     parent: mainWin,
     modal: true,
@@ -336,7 +336,6 @@ ipcMain.handle("tar-save", async (_e, { srcFile, entriesFile, outFile }) => {
   const fsMod = require("fs");
   const entries = JSON.parse(fsMod.readFileSync(entriesFile, "utf8"));
   fsMod.unlinkSync(entriesFile);
-  console.log("tar-save:", entries.length, "entries, src:", srcFile, "out:", outFile);
   const fdIn = srcFile ? fsMod.openSync(srcFile, "r") : null;
   const fdOut = fsMod.openSync(outFile, "w");
   let outPos = 0;
@@ -415,7 +414,6 @@ ipcMain.handle("tar-save", async (_e, { srcFile, entriesFile, outFile }) => {
   fsMod.writeSync(fdOut, Buffer.alloc(1024), 0, 1024, outPos);
   if (fdIn !== null) fsMod.closeSync(fdIn);
   fsMod.closeSync(fdOut);
-  console.log("tar-save done:", ((outPos + 1024) / 1024 / 1024 / 1024).toFixed(2), "GB");
   return offsets;
 });
 
@@ -489,7 +487,7 @@ app.whenReady().then(() => {
 app.on("open-file", (event, filePath) => {
   event.preventDefault();
   const lower = filePath.toLowerCase();
-  const supported = [".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz", ".tar.zst", ".tzst"];
+  const supported = [".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz", ".tar.zst", ".tzst", ".tar.7z", ".t7z", ".7z", ".rar"];
   if (!supported.some((ext) => lower.endsWith(ext))) return;
   if (lower.endsWith(".tar.zst") || lower.endsWith(".tzst")) {
     const { isZstdAvailable } = require("./archive");
