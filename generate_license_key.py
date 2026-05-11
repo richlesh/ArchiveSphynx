@@ -3,7 +3,7 @@ import sys
 import hmac
 import hashlib
 
-SALT = "ArchiveSphinx-2026"
+SALT = "ArchiveSphynx-2026"
 
 if len(sys.argv) != 2:
     print("Usage: generate_license_key.py <name>")

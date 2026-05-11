@@ -5,7 +5,6 @@ const AdmZip = require("adm-zip");
 const tar = require("tar-stream");
 const unbzip2 = require("unbzip2-stream");
 const bzip2 = require("compressjs").Bzip2;
-const lzma = require("lzma-native");
 const fzstd = require("fzstd");
 const { execFileSync } = require("child_process");
 
@@ -225,11 +224,12 @@ class TarArchive {
           proc.on("error", () => { fs.closeSync(outFd); resolve(false); });
         });
         if (!ok) {
-          const buf = fs.readFileSync(filePath);
-          const tarBuf = await new Promise((resolve, reject) => {
-            lzma.decompress(buf, (result, err) => { if (err) reject(err); else resolve(result); });
+          const outFd2 = fs.openSync(this._tempFile, "w");
+          await new Promise((resolve, reject) => {
+            const proc = spawn(getSevenZipPath(), ["e", "-so", filePath], { stdio: ["ignore", outFd2, "pipe"] });
+            proc.on("close", (code) => { fs.closeSync(outFd2); code === 0 ? resolve() : reject(new Error("xz decompression failed — install xz or 7z")); });
+            proc.on("error", (err) => { fs.closeSync(outFd2); reject(err); });
           });
-          fs.writeFileSync(this._tempFile, tarBuf);
         }
       } else if (this.compression === "zst") {
         const { spawn } = require("child_process");

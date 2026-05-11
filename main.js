@@ -5,7 +5,7 @@ const { spawn } = require("child_process");
 const nodeCrypto = require("crypto");
 const { load, save } = require("./settings");
 
-const LICENSE_SALT = "ArchiveSphinx-2026";
+const LICENSE_SALT = "ArchiveSphynx-2026";
 
 function openExternal(url) {
   if (process.platform === "linux") {
