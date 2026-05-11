@@ -251,7 +251,7 @@ function openLicense() {
     webPreferences: { nodeIntegration: true, contextIsolation: false }
   });
   licenseWin.setMenuBarVisibility(false);
-  licenseWin.loadFile("license.html");
+  licenseWin.loadFile("license_dialog.html");
   licenseWin.webContents.once("did-finish-load", () => {
     const { licenseKey, userName } = load();
     licenseWin.webContents.send("license-data", { key: licenseKey || "", userName: userName || "" });

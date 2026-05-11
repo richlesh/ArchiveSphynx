@@ -16,7 +16,7 @@
 - **Constants**: SCREAMING_SNAKE for true constants (`SETTINGS_PATH`, `LICENSE_SALT`)
 - **IPC channel names**: kebab-case strings (`"settings-save"`, `"license-cancel"`)
 - **File names**: kebab-case (`settings.js`, `generate_license_key.py`)
-- **HTML files**: lowercase, descriptive (`about.html`, `splash.html`, `license.html`)
+- **HTML files**: lowercase, descriptive (`about.html`, `splash.html`, `license_dialog.html`)
 
 ## IPC Architecture Pattern
 

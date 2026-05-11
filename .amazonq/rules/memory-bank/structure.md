@@ -9,7 +9,7 @@ ArchiveSphinx/
 ├── settings.html              # Settings window UI
 ├── settings.js                # Settings module (load/save to disk)
 ├── about.html                 # About dialog
-├── license.html               # License key entry
+├── license_dialog.html               # License key entry
 ├── splash.html                # Splash/loading screen
 ├── config.json                # App configuration (empty, ready for extension)
 ├── package.json               # npm config, electron-builder config
@@ -43,7 +43,7 @@ Node module for persistence:
 - `load()` returns settings object (with defaults merged)
 - `save(settings)` writes to `~/.archivesphinx-settings.json`
 
-### license.html — License Key Window
+### license_dialog.html — License Key Window
 HMAC-SHA256 validation with formatted key input (XXXX-XXXX-XXXX-XXXX).
 
 ### splash.html — Splash Screen

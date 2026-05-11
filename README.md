@@ -75,7 +75,7 @@ ArchiveSphinx/
 ├── settings.html        # Settings window
 ├── settings.js          # Settings module (load/save)
 ├── about.html           # About dialog
-├── license.html         # License key entry
+├── license_dialog.html         # License key entry
 ├── splash.html          # Splash screen
 ├── config.json          # App configuration
 ├── package.json         # npm/electron-builder config
