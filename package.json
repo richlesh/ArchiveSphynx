@@ -29,6 +29,56 @@
       "*.ico",
       "node_modules/**"
     ],
+    "fileAssociations": [
+      {
+        "ext": "zip",
+        "name": "ZIP Archive",
+        "icon": "doc_icon_zip",
+        "mimeType": "application/zip"
+      },
+      {
+        "ext": "7z",
+        "name": "7-Zip Archive",
+        "icon": "doc_icon_7zip",
+        "mimeType": "application/x-7z-compressed"
+      },
+      {
+        "ext": "tar",
+        "name": "TAR Archive",
+        "icon": "doc_icon_tar",
+        "mimeType": "application/x-tar"
+      },
+      {
+        "ext": "tgz",
+        "name": "Gzipped TAR Archive",
+        "icon": "doc_icon_tar",
+        "mimeType": "application/gzip"
+      },
+      {
+        "ext": "tbz2",
+        "name": "Bzip2 TAR Archive",
+        "icon": "doc_icon_tar",
+        "mimeType": "application/x-bzip2"
+      },
+      {
+        "ext": "txz",
+        "name": "XZ TAR Archive",
+        "icon": "doc_icon_tar",
+        "mimeType": "application/x-xz"
+      },
+      {
+        "ext": "tzst",
+        "name": "Zstandard TAR Archive",
+        "icon": "doc_icon_tar",
+        "mimeType": "application/zstd"
+      },
+      {
+        "ext": "t7z",
+        "name": "7-Zip TAR Archive",
+        "icon": "doc_icon_tar",
+        "mimeType": "application/x-7z-compressed"
+      }
+    ],
     "mac": {
       "category": "public.app-category.productivity",
       "target": "dmg",
