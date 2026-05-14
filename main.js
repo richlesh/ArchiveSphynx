@@ -29,13 +29,13 @@ function isValidLicense(key, userName) {
 
 const appIcon = nativeImage.createFromPath(path.join(__dirname, "app_icon.icns"));
 
-app.name = "ArchiveSphinx";
+app.name = "ArchiveSphynx";
 
 app.setAboutPanelOptions({
-  applicationName: "ArchiveSphinx",
+  applicationName: "ArchiveSphynx",
   applicationVersion: require("./package.json").version,
   credits: `by Richard Lesh\nBuilt with Electron v${process.versions.electron}`,
-  website: "https://glowingcatsoftware.com/ArchiveSphinx.html",
+  website: "https://glowingcatsoftware.com/ArchiveSphynx.html",
   iconImage: appIcon
 });
 
@@ -182,7 +182,7 @@ function buildMenu() {
     {
       label: app.name,
       submenu: [
-        { label: "About ArchiveSphinx", click: showAbout },
+        { label: "About ArchiveSphynx", click: showAbout },
         { type: "separator" },
         { label: "Settings…", click: openSettings },
         { label: "License Key…", click: openLicense },

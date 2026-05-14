@@ -1,4 +1,4 @@
-# ArchiveSphinx v1.1.0
+# ArchiveSphynx v1.1.0
 
 A cross-platform archive management tool.
 
@@ -16,7 +16,7 @@ A cross-platform archive management tool.
 - Clean macOS metadata files (`.DS_Store`, `__MACOSX`) with one click
 - Configurable executable paths for gzip, bzip2, xz, zstd, and 7-zip
 - Save progress reporting for TAR archives
-- Settings window (save/load to `~/.archivesphinx-settings.json`)
+- Settings window (save/load to `~/.archivesphynx-settings.json`)
 - License key validation (HMAC-SHA256 based)
 - Splash screen with donation link
 - About window
@@ -34,8 +34,8 @@ A cross-platform archive management tool.
 
 ### Setup
 ```bash
-git clone https://github.com/richlesh/ArchiveSphinx.git
-cd ArchiveSphinx
+git clone https://github.com/richlesh/ArchiveSphynx.git
+cd ArchiveSphynx
 npm install
 ```
 
@@ -68,7 +68,7 @@ Output files are placed in the `dist/` folder.
 ## Project Structure
 
 ```
-ArchiveSphinx/
+ArchiveSphynx/
 ├── main.js              # Electron main process
 ├── index.html           # Main window
 ├── styles.css           # Main window styles

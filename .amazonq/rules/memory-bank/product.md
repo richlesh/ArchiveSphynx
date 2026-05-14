@@ -1,7 +1,7 @@
-# ArchiveSphinx — Product Overview
+# ArchiveSphynx — Product Overview
 
 ## Purpose
-ArchiveSphinx is a cross-platform archive management tool built with Electron. It provides settings persistence, license key validation, splash screen, and about window.
+ArchiveSphynx is a cross-platform archive management tool built with Electron. It provides settings persistence, license key validation, splash screen, and about window.
 
 ## Version
 1.1.0
@@ -9,7 +9,7 @@ ArchiveSphinx is a cross-platform archive management tool built with Electron. I
 ## Key Features
 
 ### Settings Window
-- Save/load settings to `~/.archivesphinx-settings.json`
+- Save/load settings to `~/.archivesphynx-settings.json`
 - Ready for app-specific settings to be added
 
 ### License Key Validation

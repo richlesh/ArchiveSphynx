@@ -1,4 +1,4 @@
-# ArchiveSphinx — Development Guidelines
+# ArchiveSphynx — Development Guidelines
 
 ## Code Style & Formatting
 
@@ -68,7 +68,7 @@ const { load, save } = require("./settings");
 ## License Key Pattern
 
 HMAC-SHA256 based, shared between JS (main.js) and Python (generate_license_key.py):
-- Salt: `"ArchiveSphinx-2026"`
+- Salt: `"ArchiveSphynx-2026"`
 - Input: `userName.toLowerCase().trim()`
 - Output: first 16 hex chars, uppercased
 - Validation: constant-time string comparison after normalizing to uppercase

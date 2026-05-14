@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>ArchiveSphinx</title>
+  <title>ArchiveSphynx</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -103,7 +103,7 @@
 
     function setDirty(val) {
       dirty = val;
-      const title = archivePath ? path.basename(archivePath) : "ArchiveSphinx";
+      const title = archivePath ? path.basename(archivePath) : "ArchiveSphynx";
       document.title = dirty ? "● " + title : title;
       ipcRenderer.invoke("set-dirty", dirty);
     }
@@ -342,12 +342,12 @@
         tr.addEventListener("dragstart", (e) => {
           if (isReadOnly()) { e.preventDefault(); return; }
           const paths = selectedPaths.has(entry.entryName) ? [...selectedPaths] : [entry.entryName];
-          e.dataTransfer.setData("application/x-archivesphinx-entry", JSON.stringify(paths));
+          e.dataTransfer.setData("application/x-archivesphynx-entry", JSON.stringify(paths));
           e.dataTransfer.effectAllowed = "move";
         });
         tr.addEventListener("dragover", (e) => {
           if (isReadOnly()) return;
-          if (e.dataTransfer.types.includes("application/x-archivesphinx-entry")) {
+          if (e.dataTransfer.types.includes("application/x-archivesphynx-entry")) {
             e.preventDefault();
             e.dataTransfer.dropEffect = "move";
             tr.classList.add("drop-target");
@@ -361,7 +361,7 @@
         tr.addEventListener("drop", async (e) => {
           tr.classList.remove("drop-target");
           if (isReadOnly()) return;
-          const raw = e.dataTransfer.getData("application/x-archivesphinx-entry");
+          const raw = e.dataTransfer.getData("application/x-archivesphynx-entry");
           if (raw) {
             e.preventDefault();
             e.stopPropagation();
@@ -775,7 +775,7 @@
       } else if (newArchiveObj.format === "7z") {
         // 7z: extract source to temp dir, then archive directly (avoids memory buffering)
         const os = require("os");
-        const tempDir = path.join(os.tmpdir(), "archivesphinx-saveas-" + Date.now());
+        const tempDir = path.join(os.tmpdir(), "archivesphynx-saveas-" + Date.now());
         fs.mkdirSync(tempDir, { recursive: true });
         try {
           updateProgressLabel("Extracting…");
@@ -1047,7 +1047,7 @@
 
     treeContainer.addEventListener("dragover", (e) => {
       if (isReadOnly()) return;
-      if (e.dataTransfer.types.includes("application/x-archivesphinx-entry")) {
+      if (e.dataTransfer.types.includes("application/x-archivesphynx-entry")) {
         e.preventDefault();
         e.dataTransfer.dropEffect = "move";
         return;
@@ -1058,7 +1058,7 @@
     });
     treeContainer.addEventListener("drop", async (e) => {
       if (isReadOnly()) return;
-      const raw = e.dataTransfer.getData("application/x-archivesphinx-entry");
+      const raw = e.dataTransfer.getData("application/x-archivesphynx-entry");
       if (raw) {
         e.preventDefault();
         if (saving) return;
@@ -1080,7 +1080,7 @@
         }
         return;
       }
-      if (e.dataTransfer.types.includes("application/x-archivesphinx-entry")) return;
+      if (e.dataTransfer.types.includes("application/x-archivesphynx-entry")) return;
       e.preventDefault();
       if (!archive || !archivePath || saving) return;
       const files = [...e.dataTransfer.files];

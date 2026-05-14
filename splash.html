@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>ArchiveSphinx</title>
+  <title>ArchiveSphynx</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -41,14 +41,14 @@
 </head>
 <body>
   <img id="icon">
-  <h1>ArchiveSphinx</h1>
+  <h1>ArchiveSphynx</h1>
   <p>Version <span id="app-version"></span></p>
   <p id="donate">
     If you enjoy using this product<br>
     please consider donating to help<br>
     fund this and other open source<br>
     projects at
-    <a id="donate-link" href="https://glowingcat.com/ArchiveSphinx.html">Glowing Cat Software</a>.
+    <a id="donate-link" href="https://glowingcat.com/ArchiveSphynx.html">Glowing Cat Software</a>.
   </p>
 
   <script>
@@ -59,7 +59,7 @@
 
     document.getElementById("donate-link").addEventListener("click", e => {
       e.preventDefault();
-      ipcRenderer.invoke("open-external", "https://glowingcat.com/ArchiveSphinx.html");
+      ipcRenderer.invoke("open-external", "https://glowingcat.com/ArchiveSphynx.html");
     });
 
     // close on click anywhere except the link, or after 20 seconds

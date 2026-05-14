@@ -186,7 +186,7 @@ class TarArchive {
     } else {
       // Decompress to a temp file
       const os = require("os");
-      this._tempFile = path.join(os.tmpdir(), "archivesphinx-" + Date.now() + ".tar");
+      this._tempFile = path.join(os.tmpdir(), "archivesphynx-" + Date.now() + ".tar");
       if (this.compression === "7z") {
         const { spawn } = require("child_process");
         const outFd = fs.openSync(this._tempFile, "w");
@@ -400,7 +400,7 @@ class TarArchive {
       await this._packTarToFile(filePath, onProgress);
     } else if (this.compression === "none") {
       // Same file — use temp to avoid reading from file we're writing
-      const tempTar = path.join(os.tmpdir(), "archivesphinx-pack-" + Date.now() + ".tar");
+      const tempTar = path.join(os.tmpdir(), "archivesphynx-pack-" + Date.now() + ".tar");
       await this._packTarToFile(tempTar, onProgress);
       await fs.promises.rename(tempTar, filePath).catch(async () => {
         await fs.promises.copyFile(tempTar, filePath);
@@ -408,7 +408,7 @@ class TarArchive {
       });
     } else {
       // Compressed: pack to temp tar, then compress using CLI tools
-      const tempTar = path.join(os.tmpdir(), "archivesphinx-pack-" + Date.now() + ".tar");
+      const tempTar = path.join(os.tmpdir(), "archivesphynx-pack-" + Date.now() + ".tar");
       if (onStatus) { onStatus("Archiving…"); await new Promise((r) => setTimeout(r, 0)); }
       await this._packTarToFile(tempTar, onProgress);
       if (onStatus) { onStatus("Compressing…"); await new Promise((r) => setTimeout(r, 0)); }
@@ -477,7 +477,7 @@ class TarArchive {
     try {
       const { ipcRenderer } = require("electron");
       const os = require("os");
-      const entriesFile = path.join(os.tmpdir(), "archivesphinx-entries-" + Date.now() + ".json");
+      const entriesFile = path.join(os.tmpdir(), "archivesphynx-entries-" + Date.now() + ".json");
       const entries = this.entries.map((e) => ({
         name: e.entryName,
         isDir: e.isDirectory,
@@ -708,7 +708,7 @@ class SevenZipArchive {
   async save(filePath, onProgress) {
     const os = require("os");
     const { spawnSync } = require("child_process");
-    const tempDir = path.join(os.tmpdir(), "archivesphinx-7z-" + Date.now());
+    const tempDir = path.join(os.tmpdir(), "archivesphynx-7z-" + Date.now());
     fs.mkdirSync(tempDir, { recursive: true });
     // Extract current archive to temp if we have a source
     if (this._filePath && fs.existsSync(this._filePath)) {

@@ -1,4 +1,4 @@
-# ArchiveSphinx — Technology Stack
+# ArchiveSphynx — Technology Stack
 
 ## Runtime & Framework
 - **Electron** ^41.3.0 — cross-platform desktop shell (Chromium + Node.js)
@@ -13,8 +13,8 @@
 
 ## Build & Distribution
 - **electron-builder** handles packaging for all platforms
-- App ID: `com.richardlesh.archivesphinx`
-- Artifact naming: `ArchiveSphinx-{version}-{arch}.{ext}`
+- App ID: `com.richardlesh.archivesphynx`
+- Artifact naming: `ArchiveSphynx-{version}-{arch}.{ext}`
 
 ### Build Targets
 | Platform | Format |
@@ -39,4 +39,4 @@ npm run dist:all           # All platforms sequentially
 - `generate_license_key.py` — standalone Python script for license key generation (standard library only)
 
 ## Persisted Data
-- Settings file: `~/.archivesphinx-settings.json` (written by main process via `fs` module)
+- Settings file: `~/.archivesphynx-settings.json` (written by main process via `fs` module)

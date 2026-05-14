@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
-const SETTINGS_PATH = path.join(os.homedir(), ".archivesphinx-settings.json");
+const SETTINGS_PATH = path.join(os.homedir(), ".archivesphynx-settings.json");
 
 const DEFAULTS = {
   columnOrder: ["name", "modified", "size", "compressed", "attributes", "type", "method"],

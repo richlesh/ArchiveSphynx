@@ -1,8 +1,8 @@
 {
-  "name": "archivesphinx",
-  "productName": "ArchiveSphinx",
+  "name": "archivesphynx",
+  "productName": "ArchiveSphynx",
   "version": "1.1.0",
-  "description": "ArchiveSphinx - Archive Management Tool",
+  "description": "ArchiveSphynx - Archive Management Tool",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -15,10 +15,10 @@
     "dist:all": "npm run dist:mac:x64 && npm run dist:mac:arm64 && npm run dist:win:x64 && npm run dist:win:arm64 && npm run dist:linux:x64 && npm run dist:linux:arm64"
   },
   "build": {
-    "appId": "com.richardlesh.archivesphinx",
-    "productName": "ArchiveSphinx",
+    "appId": "com.richardlesh.archivesphynx",
+    "productName": "ArchiveSphynx",
     "icon": "app_icon",
-    "artifactName": "ArchiveSphinx-${version}-${arch}.${ext}",
+    "artifactName": "ArchiveSphynx-${version}-${arch}.${ext}",
     "files": [
       "*.js",
       "*.html",

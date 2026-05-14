@@ -40,5 +40,5 @@ sign_app() {
   codesign --verify --deep --strict "$APP" && echo "OK" || echo "FAILED"
 }
 
-sign_app "dist/mac/ArchiveSphinx.app"
-sign_app "dist/mac-arm64/ArchiveSphinx.app"
+sign_app "dist/mac/ArchiveSphynx.app"
+sign_app "dist/mac-arm64/ArchiveSphynx.app"

@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>About ArchiveSphinx</title>
+  <title>About ArchiveSphynx</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -44,13 +44,13 @@
 </head>
 <body>
   <img id="icon">
-  <h1>ArchiveSphinx</h1>
+  <h1>ArchiveSphynx</h1>
   <p>
     Version <span id="app-version"></span><br>
     ©2026 Richard Lesh<br>
     Built with Electron v<span id="electron-version"></span><br>
-    <a id="website" href="https://glowingcat.com/ArchiveSphinx.html">Glowing Cat Software</a><br>
-    <a id="issues" href="https://github.com/richlesh/ArchiveSphinx/issues">Report issues on GitHub</a>
+    <a id="website" href="https://glowingcat.com/ArchiveSphynx.html">Glowing Cat Software</a><br>
+    <a id="issues" href="https://github.com/richlesh/ArchiveSphynx/issues">Report issues on GitHub</a>
   </p>
   <button id="ok-btn">OK</button>
   <p id="thank-you" style="display:none;font-weight:600;">Thank you for donating to<br>Glowing Cat Software!</p>
@@ -74,12 +74,12 @@
 
     document.getElementById("website").addEventListener("click", e => {
       e.preventDefault();
-      ipcRenderer.invoke("open-external", "https://glowingcat.com/ArchiveSphinx.html");
+      ipcRenderer.invoke("open-external", "https://glowingcat.com/ArchiveSphynx.html");
     });
 
     document.getElementById("issues").addEventListener("click", e => {
       e.preventDefault();
-      ipcRenderer.invoke("open-external", "https://github.com/richlesh/ArchiveSphinx/issues");
+      ipcRenderer.invoke("open-external", "https://github.com/richlesh/ArchiveSphynx/issues");
     });
 
     document.getElementById("ok-btn").addEventListener("click", () => {

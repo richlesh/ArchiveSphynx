@@ -1,8 +1,8 @@
-# ArchiveSphinx — Project Structure
+# ArchiveSphynx — Project Structure
 
 ## Directory Layout
 ```
-ArchiveSphinx/
+ArchiveSphynx/
 ├── main.js                    # Electron main process — app lifecycle, IPC, windows
 ├── index.html                 # Main window renderer (blank starter)
 ├── styles.css                 # Main window styles
@@ -41,7 +41,7 @@ Inline renderer script. Ready for app-specific settings fields.
 ### settings.js — Settings Module
 Node module for persistence:
 - `load()` returns settings object (with defaults merged)
-- `save(settings)` writes to `~/.archivesphinx-settings.json`
+- `save(settings)` writes to `~/.archivesphynx-settings.json`
 
 ### license_dialog.html — License Key Window
 HMAC-SHA256 validation with formatted key input (XXXX-XXXX-XXXX-XXXX).
@@ -64,4 +64,4 @@ Shows version, credits, links. Shows "thank you" for licensed users.
 - All windows use `nodeIntegration: true, contextIsolation: false`
 
 ### Single Settings File
-All user preferences stored in `~/.archivesphinx-settings.json`, read/written by main process via `fs` module.
+All user preferences stored in `~/.archivesphynx-settings.json`, read/written by main process via `fs` module.
