@@ -1,37 +1,55 @@
 const fs = require("fs");
 const path = require("path");
 const zlib = require("zlib");
-const AdmZip = require("adm-zip");
-const tar = require("tar-stream");
-const unbzip2 = require("unbzip2-stream");
-const bzip2 = require("compressjs").Bzip2;
-const fzstd = require("fzstd");
+const { StreamingReader, StreamingWriter, ArchiveReader, ArchiveWriter, FORMAT, FILTER } = require("sphynx");
 const { execFileSync } = require("child_process");
 
-// XZ/LZMA fallback: try lzma-native, then lzma-purejs
-let _lzma = null;
-function getLzma() {
-  if (_lzma) return _lzma;
-  try { _lzma = { type: "native", mod: require("lzma-native") }; }
-  catch { _lzma = { type: "pure", mod: require("lzma-purejs") }; }
-  return _lzma;
+// XZ/LZMA decompression via sphynx (libarchive WASM)
+async function xzDecompress(buf) {
+  const reader = await ArchiveReader.open(buf);
+  const entry = reader.next();
+  const result = entry ? reader.readAll() : Buffer.alloc(0);
+  reader.close();
+  return result;
 }
 
-function xzDecompress(buf) {
-  const lzma = getLzma();
-  if (lzma.type === "native") {
-    return lzma.mod.decompress(buf);
-  }
-  // lzma-purejs: decompress raw LZMA stream (xz container must be stripped)
-  return Buffer.from(lzma.mod.decompressFile(buf));
+async function xzCompress(buf) {
+  const writer = await ArchiveWriter.create(FORMAT.RAW, FILTER.XZ);
+  writer.addFile("data", buf);
+  return writer.finish();
 }
 
-function xzCompress(buf) {
-  const lzma = getLzma();
-  if (lzma.type === "native") {
-    return lzma.mod.compress(buf, { preset: 6 });
+// Generic decompression via sphynx (handles bzip2, zstd, xz, gzip)
+// Reads a compressed tar and returns the raw decompressed tar bytes
+async function sphynxDecompressToTar(compressedBuf) {
+  // libarchive will auto-detect the filter and format
+  // We iterate entries and reconstruct a raw tar
+  // Simpler: use the raw filter decompression by reading all entry data
+  const reader = await ArchiveReader.open(compressedBuf);
+  const entries = [];
+  let entry;
+  while ((entry = reader.next()) !== null) {
+    const data = entry.isDirectory ? null : reader.readAll();
+    entries.push({ ...entry, data });
   }
-  return Buffer.from(lzma.mod.compressFile(buf));
+  reader.close();
+  // Re-pack as uncompressed tar
+  const writer = await ArchiveWriter.create(FORMAT.TAR, FILTER.NONE);
+  for (const e of entries) {
+    if (e.isDirectory) {
+      writer.addDirectory(e.pathname, { mtime: e.mtime, perm: e.perm });
+    } else {
+      writer.addFile(e.pathname, e.data || Buffer.alloc(0), { mtime: e.mtime, perm: e.perm });
+    }
+  }
+  return writer.finish();
+}
+
+// Decompress raw compressed data (not an archive, just a compressed blob)
+async function sphynxDecompressRaw(buf) {
+  // For bzip2/zstd/xz compressed tar files, libarchive treats them as
+  // filter+format, so we extract all entries and re-pack as raw tar
+  return sphynxDecompressToTar(buf);
 }
 
 let zstdPath = "zstd";
@@ -96,98 +114,69 @@ class ZipArchive {
     this.format = "zip";
     this.entries = [];
     this._sourceFile = null;
-    this._admZipCache = null;
   }
 
   create() {
     this.entries = [];
     this._sourceFile = null;
-    this._admZipCache = null;
   }
 
   async open(filePath, onProgress) {
-    const yauzl = require("yauzl");
     this._sourceFile = filePath;
-    this._admZipCache = null;
     this.entries = [];
-    await new Promise((resolve, reject) => {
-      yauzl.open(filePath, { lazyEntries: true, autoClose: true }, (err, zipfile) => {
-        if (err) return reject(err);
-        const total = zipfile.entryCount;
-        let count = 0;
-        zipfile.readEntry();
-        zipfile.on("entry", (entry) => {
-          this.entries.push({
-            entryName: entry.fileName,
-            isDirectory: entry.fileName.endsWith("/"),
-            size: entry.uncompressedSize,
-            compressedSize: entry.compressedSize,
-            time: entry.getLastModDate(),
-            method: entry.compressionMethod === 8 ? "Deflate" : entry.compressionMethod === 0 ? "Store" : String(entry.compressionMethod),
-            attr: entry.externalFileAttributes,
-            _data: null,
-            _offset: entry.relativeOffsetOfLocalHeader,
-          });
-          count++;
-          if (onProgress && count % 500 === 0) onProgress(count, total);
-          zipfile.readEntry();
-        });
-        zipfile.on("end", () => {
-          if (onProgress) onProgress(total, total);
-          resolve();
-        });
-        zipfile.on("error", reject);
+    const reader = await StreamingReader.openFile(filePath);
+    let count = 0;
+    for (const entry of reader) {
+      let size = entry.size;
+      if (!entry.isDirectory && size === 0) {
+        // ZIP entries may not report size in header; measure from data
+        const data = reader.readAll();
+        size = data.length;
+      }
+      this.entries.push({
+        entryName: entry.pathname,
+        isDirectory: entry.isDirectory,
+        size,
+        compressedSize: 0,
+        time: entry.mtime ? new Date(entry.mtime * 1000) : null,
+        method: "Deflate",
+        attr: entry.perm << 16,
+        _data: null,
       });
-    });
+      count++;
+      if (onProgress && count % 500 === 0) onProgress(count, 0);
+    }
+    reader.close();
+    if (onProgress) onProgress(count, count);
   }
 
   async save(filePath) {
-    const yazl = require("yazl");
-    const zipfile = new yazl.ZipFile();
+    const writer = await StreamingWriter.createFile(filePath, "ZIP", "NONE");
     for (const e of this.entries) {
       if (e.isDirectory) {
-        zipfile.addEmptyDirectory(e.entryName.replace(/\/$/, ""), { mtime: e.time || new Date() });
+        writer.addDirectory(e.entryName, { mtime: e.time ? Math.floor(e.time.getTime() / 1000) : undefined, perm: e.attr ? (e.attr >>> 16) : 0o755 });
       } else {
         const data = e._data || await this._readEntryData(e);
-        zipfile.addBuffer(data, e.entryName, { mtime: e.time || new Date(), mode: e.attr ? (e.attr >>> 16) : 0o644 });
+        writer.addFile(e.entryName, data, { mtime: e.time ? Math.floor(e.time.getTime() / 1000) : undefined, perm: e.attr ? (e.attr >>> 16) : 0o644 });
       }
     }
-    zipfile.end();
-    await new Promise((resolve, reject) => {
-      const ws = fs.createWriteStream(filePath);
-      zipfile.outputStream.pipe(ws);
-      ws.on("close", resolve);
-      ws.on("error", reject);
-    });
-    // Re-open to update offsets and compressed sizes
+    writer.finish();
     await this.open(filePath);
   }
 
-  _readEntryData(entry) {
-    if (entry._data) return Promise.resolve(entry._data);
-    if (!this._sourceFile) return Promise.resolve(Buffer.alloc(0));
-    const yauzl = require("yauzl");
-    return new Promise((resolve, reject) => {
-      yauzl.open(this._sourceFile, { lazyEntries: true, autoClose: true }, (err, zipfile) => {
-        if (err) return reject(err);
-        zipfile.readEntry();
-        zipfile.on("entry", (ze) => {
-          if (ze.fileName === entry.entryName) {
-            zipfile.openReadStream(ze, (err2, stream) => {
-              if (err2) return reject(err2);
-              const chunks = [];
-              stream.on("data", (c) => chunks.push(c));
-              stream.on("end", () => { zipfile.close(); resolve(Buffer.concat(chunks)); });
-              stream.on("error", reject);
-            });
-          } else {
-            zipfile.readEntry();
-          }
-        });
-        zipfile.on("end", () => resolve(Buffer.alloc(0)));
-        zipfile.on("error", reject);
-      });
-    });
+  async _readEntryData(entry) {
+    if (entry._data) return entry._data;
+    if (!this._sourceFile) return Buffer.alloc(0);
+    const reader = await StreamingReader.openFile(this._sourceFile);
+    let result = Buffer.alloc(0);
+    for (const e of reader) {
+      if (e.pathname === entry.entryName && !e.isDirectory) {
+        result = reader.readAll();
+        break;
+      }
+    }
+    reader.close();
+    return result;
   }
 
   refresh() {}
@@ -214,7 +203,6 @@ class ZipArchive {
       method: "Deflate",
       attr: 0,
       _data: entryName.endsWith("/") ? null : data,
-      _offset: -1,
     });
   }
 
@@ -238,91 +226,92 @@ class ZipArchive {
 
   getData(entryName) {
     const entry = this.entries.find((e) => e.entryName === entryName);
-    if (!entry) return null;
+    if (!entry || entry.isDirectory) return null;
     if (entry._data) return entry._data;
     if (!this._sourceFile) return null;
-    if (!this._admZipCache) {
-      const AdmZip = require("adm-zip");
-      this._admZipCache = new AdmZip(this._sourceFile);
+    // Use sphynx in-memory reader (module already initialized from open())
+    const { _getModuleSync } = require("sphynx");
+    const mod = _getModuleSync();
+    if (!mod) return this._getDataSync(entryName);
+    const fileBuf = fs.readFileSync(this._sourceFile);
+    const ptr = mod._reader_new();
+    const wasmBuf = mod._malloc(fileBuf.length);
+    mod.HEAPU8.set(fileBuf, wasmBuf);
+    const r = mod._reader_open_memory(ptr, wasmBuf, fileBuf.length);
+    if (r !== 0) { mod._free(wasmBuf); mod._reader_close(ptr); return this._getDataSync(entryName); }
+    let result = null;
+    let rc;
+    while ((rc = mod._reader_next(ptr)) === 0) {
+      const name = mod.UTF8ToString(mod._entry_pathname());
+      if (name === entryName) {
+        const chunks = [];
+        const readBuf = mod._malloc(262144);
+        let n;
+        while ((n = mod._reader_read_data(ptr, readBuf, 262144)) > 0) {
+          chunks.push(Buffer.from(mod.HEAPU8.slice(readBuf, readBuf + n)));
+        }
+        mod._free(readBuf);
+        result = Buffer.concat(chunks);
+        break;
+      }
     }
-    const ze = this._admZipCache.getEntry(entryName);
-    return ze ? ze.getData() : null;
+    mod._free(wasmBuf);
+    mod._reader_close(ptr);
+    return result;
+  }
+
+  _getDataSync(entryName) {
+    if (!this._sourceFile) return null;
+    // Use 7z CLI as sync fallback for getData
+    const { spawnSync } = require("child_process");
+    const result = spawnSync(getSevenZipPath(), ["e", "-so", "-y", this._sourceFile, entryName], { stdio: ["ignore", "pipe", "pipe"], maxBuffer: Infinity });
+    if (result.status === 0 && result.stdout && result.stdout.length > 0) return result.stdout;
+    return null;
   }
 
   extractEntry(entryName, dest) {
     if (!this._sourceFile) return;
-    const AdmZip = require("adm-zip");
-    const zip = new AdmZip(this._sourceFile);
-    const entry = zip.getEntry(entryName);
-    if (entry) zip.extractEntryTo(entry, dest, true, true);
+    const { spawnSync } = require("child_process");
+    spawnSync(getSevenZipPath(), ["x", "-o" + dest, "-y", this._sourceFile, entryName], { stdio: ["ignore", "pipe", "pipe"] });
   }
 
   async extractAll(dest, onProgress) {
     if (!this._sourceFile) return;
-    const yauzl = require("yauzl");
-    await new Promise((resolve, reject) => {
-      yauzl.open(this._sourceFile, { lazyEntries: true, autoClose: true }, (err, zipfile) => {
-        if (err) return reject(err);
-        let count = 0;
-        zipfile.readEntry();
-        zipfile.on("entry", (ze) => {
-          count++;
-          if (onProgress) onProgress(count, zipfile.entryCount);
-          const outPath = path.join(dest, ze.fileName);
-          if (ze.fileName.endsWith("/")) {
-            fs.mkdirSync(outPath, { recursive: true });
-            zipfile.readEntry();
-          } else if (ze.uncompressedSize === 0) {
-            try { fs.mkdirSync(path.dirname(outPath), { recursive: true }); fs.writeFileSync(outPath, Buffer.alloc(0)); } catch {}
-            zipfile.readEntry();
-          } else {
-            let done = false;
-            const next = () => { if (!done) { done = true; zipfile.readEntry(); } };
-            try {
-              fs.mkdirSync(path.dirname(outPath), { recursive: true });
-            } catch { next(); return; }
-            try {
-              if (fs.existsSync(outPath)) { next(); return; }
-              zipfile.openReadStream(ze, (err2, stream) => {
-                if (err2) { next(); return; }
-                try {
-                  const ws = fs.createWriteStream(outPath);
-                  stream.pipe(ws);
-                  ws.on("finish", next);
-                  ws.on("error", next);
-                  stream.on("error", () => { ws.destroy(); next(); });
-                } catch { next(); }
-              });
-            } catch { next(); }
-          }
-        });
-        zipfile.on("end", resolve);
-        zipfile.on("error", reject);
-      });
-    });
+    const reader = await StreamingReader.openFile(this._sourceFile);
+    let count = 0;
+    const total = this.entries.length;
+    for (const entry of reader) {
+      count++;
+      if (onProgress && count % 100 === 0) onProgress(count, total);
+      const outPath = path.join(dest, entry.pathname);
+      if (entry.isDirectory) {
+        fs.mkdirSync(outPath, { recursive: true });
+      } else {
+        fs.mkdirSync(path.dirname(outPath), { recursive: true });
+        const data = reader.readAll();
+        fs.writeFileSync(outPath, data);
+      }
+    }
+    reader.close();
+    if (onProgress) onProgress(total, total);
   }
 
-  testIntegrity() {
+  async testIntegrity() {
     const errors = [];
     if (!this._sourceFile) return errors;
-    const yauzl = require("yauzl");
-    return new Promise((resolve) => {
-      yauzl.open(this._sourceFile, { lazyEntries: true, autoClose: true }, (err, zipfile) => {
-        if (err) { errors.push("Archive: " + err.message); return resolve(errors); }
-        zipfile.readEntry();
-        zipfile.on("entry", (entry) => {
-          if (entry.fileName.endsWith("/")) { zipfile.readEntry(); return; }
-          zipfile.openReadStream(entry, (err2, stream) => {
-            if (err2) { errors.push(entry.fileName + ": " + err2.message); zipfile.readEntry(); return; }
-            stream.on("data", () => {});
-            stream.on("end", () => zipfile.readEntry());
-            stream.on("error", (e) => { errors.push(entry.fileName + ": " + e.message); zipfile.readEntry(); });
-          });
-        });
-        zipfile.on("end", () => resolve(errors));
-        zipfile.on("error", (e) => { errors.push("Archive: " + e.message); resolve(errors); });
-      });
-    });
+    try {
+      const reader = await StreamingReader.openFile(this._sourceFile);
+      for (const entry of reader) {
+        if (!entry.isDirectory) {
+          try { reader.readAll(); }
+          catch (e) { errors.push(entry.pathname + ": " + e.message); }
+        }
+      }
+      reader.close();
+    } catch (e) {
+      errors.push("Archive: " + e.message);
+    }
+    return errors;
   }
 }
 
@@ -384,7 +373,7 @@ class TarArchive {
         });
         if (!ok) {
           const buf = fs.readFileSync(filePath);
-          fs.writeFileSync(this._tempFile, Buffer.from(bzip2.decompressFile(buf)));
+          fs.writeFileSync(this._tempFile, await sphynxDecompressToTar(buf));
         }
       } else if (this.compression === "xz") {
         const { spawn } = require("child_process");
@@ -396,8 +385,7 @@ class TarArchive {
         });
         if (!ok) {
           const buf = fs.readFileSync(filePath);
-          const decompressed = await xzDecompress(buf);
-          fs.writeFileSync(this._tempFile, decompressed);
+          fs.writeFileSync(this._tempFile, await sphynxDecompressToTar(buf));
         }
       } else if (this.compression === "zst") {
         const { spawn } = require("child_process");
@@ -409,7 +397,7 @@ class TarArchive {
         });
         if (!ok) {
           const buf = fs.readFileSync(filePath);
-          fs.writeFileSync(this._tempFile, Buffer.from(fzstd.decompress(buf)));
+          fs.writeFileSync(this._tempFile, await sphynxDecompressToTar(buf));
         }
       }
       this._sourceFile = this._tempFile;
@@ -421,12 +409,7 @@ class TarArchive {
     switch (this.compression) {
       case "gz": return zlib.gunzipSync(buf);
       case "bz2":
-        try {
-          return execFileSync(getBzip2Path(), ["-d", "-c"], { input: buf, maxBuffer: Infinity });
-        } catch {
-          bzip2FallbackUsed = true;
-          return Buffer.from(bzip2.decompressFile(buf));
-        }
+        return execFileSync(getBzip2Path(), ["-d", "-c"], { input: buf, maxBuffer: Infinity });
       default: return buf;
     }
   }
@@ -435,12 +418,7 @@ class TarArchive {
     switch (this.compression) {
       case "gz": return zlib.gzipSync(buf);
       case "bz2":
-        try {
-          return execFileSync(getBzip2Path(), ["-c"], { input: buf, maxBuffer: Infinity });
-        } catch {
-          bzip2FallbackUsed = true;
-          return Buffer.from(bzip2.compressFile(buf));
-        }
+        return execFileSync(getBzip2Path(), ["-c"], { input: buf, maxBuffer: Infinity });
       default: return buf;
     }
   }
@@ -598,7 +576,9 @@ class TarArchive {
         if (!ok) {
           bzip2FallbackUsed = true;
           const tarBuf = fs.readFileSync(tempTar);
-          fs.writeFileSync(filePath, Buffer.from(bzip2.compressFile(tarBuf)));
+          const writer = await ArchiveWriter.create(FORMAT.RAW, FILTER.BZIP2);
+          writer.addFile("data", tarBuf);
+          fs.writeFileSync(filePath, writer.finish());
           fs.unlinkSync(tempTar);
           return;
         }
@@ -622,9 +602,9 @@ class TarArchive {
             const compressed = await xzCompress(tarBuf);
             fs.writeFileSync(filePath, compressed);
           } else if (this.compression === "zst") {
-            const { compress } = require("./zstd-compress");
-            const compressed = await compress(tarBuf);
-            fs.writeFileSync(filePath, compressed);
+            const w = await ArchiveWriter.create(FORMAT.RAW, FILTER.ZSTD);
+            w.addFile("data", tarBuf);
+            fs.writeFileSync(filePath, w.finish());
           }
         }
       }
@@ -1315,8 +1295,19 @@ class RpmArchive extends SevenZipReadOnlyArchive {
     let cpioPath = innerPath;
     if (inner.endsWith(".zstd") || inner.endsWith(".zst")) {
       cpioPath = innerPath.replace(/\.zst(d)?$/, "");
-      const buf = fs.readFileSync(innerPath);
-      fs.writeFileSync(cpioPath, Buffer.from(fzstd.decompress(buf)));
+      try {
+        execFileSync(getZstdPath(), ["-d", "-f", innerPath, "-o", cpioPath], { stdio: "ignore" });
+      } catch {
+        const buf = fs.readFileSync(innerPath);
+        const reader = await ArchiveReader.open(buf);
+        const chunks = [];
+        let entry;
+        while ((entry = reader.next()) !== null) {
+          if (!entry.isDirectory) chunks.push(reader.readAll());
+        }
+        reader.close();
+        fs.writeFileSync(cpioPath, Buffer.concat(chunks));
+      }
     } else if (inner.endsWith(".gz")) {
       cpioPath = innerPath.replace(/\.gz$/, "");
       fs.writeFileSync(cpioPath, zlib.gunzipSync(fs.readFileSync(innerPath)));

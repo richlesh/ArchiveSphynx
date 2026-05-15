@@ -122,7 +122,8 @@ emcc -O2 \
   -s WASM=1 \
   -s ALLOW_MEMORY_GROWTH=1 \
   -s ALLOW_TABLE_GROWTH=1 \
-  -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","getValue","UTF8ToString","addFunction","removeFunction"]' \
+  -s EXPORTED_FUNCTIONS='["_malloc","_free"]' \
+  -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","getValue","UTF8ToString","addFunction","removeFunction","HEAPU8"]' \
   -s MODULARIZE=1 \
   -s EXPORT_NAME="createSphynx" \
   -s ENVIRONMENT='node' \
