@@ -94,18 +94,21 @@ function detectFormat(filePath) {
 class ZipArchive {
   constructor() {
     this.format = "zip";
-    this.entries = []; // { entryName, isDirectory, size, compressedSize, time, method, attr, _data, _sourceFile, _offset, _compressedSize }
+    this.entries = [];
     this._sourceFile = null;
+    this._admZipCache = null;
   }
 
   create() {
     this.entries = [];
     this._sourceFile = null;
+    this._admZipCache = null;
   }
 
   async open(filePath, onProgress) {
     const yauzl = require("yauzl");
     this._sourceFile = filePath;
+    this._admZipCache = null;
     this.entries = [];
     await new Promise((resolve, reject) => {
       yauzl.open(filePath, { lazyEntries: true, autoClose: true }, (err, zipfile) => {
@@ -237,14 +240,13 @@ class ZipArchive {
     const entry = this.entries.find((e) => e.entryName === entryName);
     if (!entry) return null;
     if (entry._data) return entry._data;
-    // Synchronous fallback — read from source using adm-zip for compat
-    if (this._sourceFile) {
+    if (!this._sourceFile) return null;
+    if (!this._admZipCache) {
       const AdmZip = require("adm-zip");
-      const zip = new AdmZip(this._sourceFile);
-      const ze = zip.getEntry(entryName);
-      return ze ? ze.getData() : null;
+      this._admZipCache = new AdmZip(this._sourceFile);
     }
-    return null;
+    const ze = this._admZipCache.getEntry(entryName);
+    return ze ? ze.getData() : null;
   }
 
   extractEntry(entryName, dest) {
@@ -614,93 +616,93 @@ class TarArchive {
   }
 
   _packTarToFile(outPath, onProgress) {
-    // Delegate to main process to avoid renderer event loop issues
-    try {
-      const { ipcRenderer } = require("electron");
-      const os = require("os");
-      const entriesFile = path.join(os.tmpdir(), "archivesphynx-entries-" + Date.now() + ".json");
-      const entries = this.entries.map((e) => ({
-        name: e.entryName,
-        isDir: e.isDirectory,
-        size: e.size || 0,
-        offset: e.sourceFile ? e.offset : undefined,
-        mtime: e.time ? e.time.toISOString() : null,
-        mode: e.mode,
-        linkname: e.linkname || undefined,
-        type: e.type || undefined,
-        data: (!e.isDirectory && e.data && !e.sourceFile) ? e.data.toString("base64") : undefined,
-        filePath: e.filePath || undefined,
-      }));
-      fs.writeFileSync(entriesFile, JSON.stringify(entries));
-      const srcFile = this._sourceFile || this.entries.find((e) => e.sourceFile)?.sourceFile || null;
-      return ipcRenderer.invoke("tar-save", { srcFile, entriesFile, outFile: outPath }).then((offsets) => {
-        // Update entries with new offsets pointing to the new file
-        if (Array.isArray(offsets)) {
-          for (let i = 0; i < this.entries.length && i < offsets.length; i++) {
-            this.entries[i].sourceFile = this.entries[i].isDirectory ? null : outPath;
-            this.entries[i].offset = offsets[i];
-            this.entries[i].data = null;
-          }
-          this._sourceFile = outPath;
-        }
-      });
-    } catch {
-      // Fallback for non-renderer (Node CLI testing)
-      return this._packTarToFileLocal(outPath, onProgress);
-    }
+    return this._packTarToFileLocal(outPath, onProgress);
   }
 
-  _packTarToFileLocal(outPath, onProgress) {
-    return new Promise((resolve, reject) => {
-      const pack = tar.pack();
-      const ws = fs.createWriteStream(outPath, { highWaterMark: 4 * 1024 * 1024 });
-      pack.pipe(ws);
-      ws.on("finish", resolve);
-      ws.on("error", reject);
-      pack.on("error", reject);
-      const total = this.entries.length;
-      let i = 0;
-      const processBatch = () => {
-        let count = 0;
-        while (i < this.entries.length && count < 500) {
-          const entry = this.entries[i++];
-          if (entry.isDirectory) {
-            pack.entry({ name: entry.entryName.replace(/\/$/, ""), type: "directory", mtime: entry.time, mode: entry.mode || 0o755 });
-          } else if (entry.data) {
-            pack.entry({ name: entry.entryName, size: entry.data.length, mtime: entry.time, mode: entry.mode || 0o644 }, entry.data);
-          } else if (entry.sourceFile && entry.size > 0) {
-            const fd = fs.openSync(entry.sourceFile, "r");
-            const chunkBuf = Buffer.allocUnsafe(Math.min(entry.size, 1024 * 1024));
-            let pos = entry.offset;
-            const end = entry.offset + entry.size;
-            if (entry.size <= chunkBuf.length) {
-              fs.readSync(fd, chunkBuf, 0, entry.size, pos);
-              fs.closeSync(fd);
-              pack.entry({ name: entry.entryName, size: entry.size, mtime: entry.time, mode: entry.mode || 0o644 }, chunkBuf.slice(0, entry.size));
-            } else {
-              const entryStream = pack.entry({ name: entry.entryName, size: entry.size, mtime: entry.time, mode: entry.mode || 0o644 });
-              while (pos < end) {
-                const toRead = Math.min(chunkBuf.length, end - pos);
-                fs.readSync(fd, chunkBuf, 0, toRead, pos);
-                pos += toRead;
-                entryStream.write(chunkBuf.slice(0, toRead));
-              }
-              fs.closeSync(fd);
-              entryStream.end();
-            }
+  async _packTarToFileLocal(outPath, onProgress) {
+    const total = this.entries.length;
+    const fdOut = fs.openSync(outPath, "w");
+    let outPos = 0;
+    const cpBuf = Buffer.allocUnsafe(4 * 1024 * 1024);
+
+    for (let idx = 0; idx < total; idx++) {
+      const entry = this.entries[idx];
+      const isDir = entry.isDirectory;
+      const name = entry.entryName;
+      const size = isDir ? 0 : (entry.data ? entry.data.length : entry.size || 0);
+
+      // GNU @LongLink for names > 100 chars
+      if (name.length > 100) {
+        const linkData = Buffer.from(name + "\0");
+        const lh = Buffer.alloc(512);
+        lh.write("././@LongLink", 0);
+        lh.write("0000000\0", 100); lh.write("0000000\0", 108); lh.write("0000000\0", 116);
+        lh.write(linkData.length.toString(8).padStart(11, "0") + "\0", 124);
+        lh.write("00000000000\0", 136); lh.write("        ", 148);
+        lh[156] = 76;
+        lh.write("ustar ", 257); lh.write(" \0", 263);
+        let ck = 0; for (let j = 0; j < 512; j++) ck += lh[j];
+        lh.write(ck.toString(8).padStart(6, "0") + "\0 ", 148);
+        fs.writeSync(fdOut, lh, 0, 512, outPos); outPos += 512;
+        fs.writeSync(fdOut, linkData, 0, linkData.length, outPos); outPos += linkData.length;
+        const lpad = (512 - (linkData.length % 512)) % 512;
+        if (lpad > 0) { fs.writeSync(fdOut, Buffer.alloc(lpad), 0, lpad, outPos); outPos += lpad; }
+      }
+
+      // Header
+      const header = Buffer.alloc(512);
+      header.write(name.slice(0, 100), 0);
+      header.write((entry.mode || (isDir ? 0o755 : 0o644)).toString(8).padStart(7, "0") + "\0", 100);
+      header.write("0000000\0", 108); header.write("0000000\0", 116);
+      header.write(size.toString(8).padStart(11, "0") + "\0", 124);
+      const mt = entry.time ? Math.floor(new Date(entry.time).getTime() / 1000) : 0;
+      header.write(mt.toString(8).padStart(11, "0") + "\0", 136);
+      header.write("        ", 148);
+      if (isDir) header[156] = 53;
+      else if (entry.type === "symlink") { header[156] = 50; if (entry.linkname) header.write(entry.linkname.slice(0, 100), 157); }
+      else header[156] = 48;
+      header.write("ustar\0", 257); header.write("00", 263);
+      let cksum = 0; for (let j = 0; j < 512; j++) cksum += header[j];
+      header.write(cksum.toString(8).padStart(6, "0") + "\0 ", 148);
+      fs.writeSync(fdOut, header, 0, 512, outPos); outPos += 512;
+
+      // Data
+      if (!isDir && entry.type !== "symlink" && size > 0) {
+        if (entry.data) {
+          fs.writeSync(fdOut, entry.data, 0, entry.data.length, outPos);
+          outPos += entry.data.length;
+        } else if (entry.filePath) {
+          const fdSrc = fs.openSync(entry.filePath, "r");
+          let remaining = size, srcPos = 0;
+          while (remaining > 0) {
+            const toRead = Math.min(cpBuf.length, remaining);
+            const n = fs.readSync(fdSrc, cpBuf, 0, toRead, srcPos);
+            if (n === 0) break;
+            fs.writeSync(fdOut, cpBuf, 0, n, outPos);
+            srcPos += n; outPos += n; remaining -= n;
           }
-          count++;
-          if (onProgress && i % 500 === 0) onProgress(i, total);
+          fs.closeSync(fdSrc);
+        } else if (entry.sourceFile) {
+          const fdSrc = fs.openSync(entry.sourceFile, "r");
+          let remaining = size, srcPos = entry.offset;
+          while (remaining > 0) {
+            const toRead = Math.min(cpBuf.length, remaining);
+            const n = fs.readSync(fdSrc, cpBuf, 0, toRead, srcPos);
+            if (n === 0) break;
+            fs.writeSync(fdOut, cpBuf, 0, n, outPos);
+            srcPos += n; outPos += n; remaining -= n;
+          }
+          fs.closeSync(fdSrc);
         }
-        if (i >= this.entries.length) {
-          if (onProgress) onProgress(total, total);
-          pack.finalize();
-        } else {
-          setImmediate(processBatch);
-        }
-      };
-      processBatch();
-    });
+        const pad = (512 - (size % 512)) % 512;
+        if (pad > 0) { fs.writeSync(fdOut, Buffer.alloc(pad), 0, pad, outPos); outPos += pad; }
+      }
+      if (onProgress && idx % 500 === 0) { onProgress(idx + 1, total); await new Promise((r) => setTimeout(r, 0)); }
+    }
+    if (onProgress) onProgress(total, total);
+    // End-of-archive marker
+    fs.writeSync(fdOut, Buffer.alloc(1024), 0, 1024, outPos);
+    fs.closeSync(fdOut);
   }
 
   _getEntryData(entry) {
@@ -839,7 +841,7 @@ class SevenZipArchive {
     const { spawnSync } = require("child_process");
     const result = spawnSync(getSevenZipPath(), ["l", "-slt", filePath], { encoding: "utf8", maxBuffer: 100 * 1024 * 1024 });
     if (result.status !== 0) throw new Error("Failed to list 7z archive: " + (result.stderr || "unknown error"));
-    const blocks = result.stdout.split(/\n\n/).filter((b) => b.includes("Path = ") && !b.includes("Type = 7z") && !b.includes("Physical Size"));
+    const blocks = result.stdout.split(/\n\n/).filter((b) => b.includes("Path = ") && !b.includes("Type = ") && !b.includes("Physical Size"));
     for (let i = 0; i < blocks.length; i++) {
       const lines = blocks[i].split("\n");
       const get = (key) => { const l = lines.find((ln) => ln.startsWith(key + " = ")); return l ? l.slice(key.length + 3) : ""; };
@@ -1032,7 +1034,7 @@ class RarArchive {
       this._parseUnrarOutput(result.stdout, onProgress);
       return;
     }
-    const blocks = result.stdout.split(/\n\n/).filter((b) => b.includes("Path = ") && !b.includes("Type = 7z") && !b.includes("Physical Size"));
+    const blocks = result.stdout.split(/\n\n/).filter((b) => b.includes("Path = ") && !b.includes("Type = ") && !b.includes("Physical Size"));
     for (let i = 0; i < blocks.length; i++) {
       const lines = blocks[i].split("\n");
       const get = (key) => { const l = lines.find((ln) => ln.startsWith(key + " = ")); return l ? l.slice(key.length + 3) : ""; };
@@ -1173,8 +1175,8 @@ class SevenZipReadOnlyArchive {
     this.entries = [];
     const { spawnSync } = require("child_process");
     const result = spawnSync(getSevenZipPath(), ["l", "-slt", filePath], { encoding: "utf8", maxBuffer: 100 * 1024 * 1024 });
-    if (result.status !== 0) throw new Error("Failed to list " + this.format + " archive: " + (result.stderr || "unknown error"));
-    const blocks = result.stdout.split(/\n\n/).filter((b) => b.includes("Path = ") && !b.includes("Type = 7z") && !b.includes("Physical Size"));
+    if (result.status !== 0 && !result.stdout) throw new Error("Failed to list " + this.format + " archive: " + (result.stderr || "unknown error").trim());
+    const blocks = result.stdout.split(/\n\n/).filter((b) => b.includes("Path = ") && !b.includes("Type = ") && !b.includes("Physical Size"));
     for (let i = 0; i < blocks.length; i++) {
       const lines = blocks[i].split("\n");
       const get = (key) => { const l = lines.find((ln) => ln.startsWith(key + " = ")); return l ? l.slice(key.length + 3) : ""; };
@@ -1257,6 +1259,73 @@ class DebArchive extends SevenZipReadOnlyArchive {
 
 class RpmArchive extends SevenZipReadOnlyArchive {
   constructor() { super("rpm"); }
+
+  async open(filePath, onProgress) {
+    this._filePath = filePath;
+    this.entries = [];
+    const os = require("os");
+    const { spawnSync } = require("child_process");
+    // Stage 1: extract RPM to get inner cpio
+    const tempDir = path.join(os.tmpdir(), "archivesphynx-rpm-" + Date.now());
+    fs.mkdirSync(tempDir, { recursive: true });
+    spawnSync(getSevenZipPath(), ["x", "-y", "-o" + tempDir, filePath], { stdio: ["ignore", "pipe", "pipe"] });
+    // Find the inner cpio file
+    const inner = fs.readdirSync(tempDir).find((f) => f.includes("cpio"));
+    if (!inner) { fs.rmSync(tempDir, { recursive: true, force: true }); return; }
+    const innerPath = path.join(tempDir, inner);
+    // Stage 2: if compressed cpio, decompress it
+    let cpioPath = innerPath;
+    if (inner.endsWith(".zstd") || inner.endsWith(".zst")) {
+      cpioPath = innerPath.replace(/\.zst(d)?$/, "");
+      const buf = fs.readFileSync(innerPath);
+      fs.writeFileSync(cpioPath, Buffer.from(fzstd.decompress(buf)));
+    } else if (inner.endsWith(".gz")) {
+      cpioPath = innerPath.replace(/\.gz$/, "");
+      fs.writeFileSync(cpioPath, zlib.gunzipSync(fs.readFileSync(innerPath)));
+    } else if (inner.endsWith(".xz") || inner.endsWith(".lzma")) {
+      cpioPath = innerPath.replace(/\.(xz|lzma)$/, "");
+      const decompressed = await xzDecompress(fs.readFileSync(innerPath));
+      fs.writeFileSync(cpioPath, decompressed);
+    }
+    // Stage 3: list the cpio using 7z
+    this._innerPath = cpioPath;
+    this._tempDir = tempDir;
+    const result = spawnSync(getSevenZipPath(), ["l", "-slt", cpioPath], { encoding: "utf8", maxBuffer: 100 * 1024 * 1024 });
+    if (result.status !== 0) { fs.rmSync(tempDir, { recursive: true, force: true }); return; }
+    const blocks = result.stdout.split(/\n\n/).filter((b) => b.includes("Path = ") && !b.includes("Physical Size"));
+    for (let i = 0; i < blocks.length; i++) {
+      const lines = blocks[i].split("\n");
+      const get = (key) => { const l = lines.find((ln) => ln.startsWith(key + " = ")); return l ? l.slice(key.length + 3) : ""; };
+      const entryPath = get("Path");
+      if (!entryPath) continue;
+      const isDir = get("Folder") === "+" || get("Attributes").startsWith("D");
+      const entryName = entryPath.replace(/\\/g, "/") + (isDir ? "/" : "");
+      const size = parseInt(get("Size"), 10) || 0;
+      const compressed = get("Packed Size") ? parseInt(get("Packed Size"), 10) : -1;
+      const mtime = get("Modified") ? new Date(get("Modified")) : null;
+      this.entries.push({ entryName, isDirectory: isDir, size, compressedSize: compressed, time: mtime, method: "" });
+      if (onProgress) onProgress(i, blocks.length);
+    }
+  }
+
+  getData(entryName) {
+    const entry = this.entries.find((e) => e.entryName === entryName);
+    if (!entry || entry.isDirectory) return null;
+    if (!this._innerPath) return null;
+    const { spawnSync } = require("child_process");
+    const result = spawnSync(getSevenZipPath(), ["e", "-so", "-y", this._innerPath, entryName.replace(/\//g, path.sep)], { stdio: ["ignore", "pipe", "pipe"], maxBuffer: Infinity });
+    return result.stdout || null;
+  }
+
+  async extractAll(dest) {
+    if (!this._innerPath) return;
+    const { spawn } = require("child_process");
+    await new Promise((resolve) => {
+      const proc = spawn(getSevenZipPath(), ["x", "-o" + dest, "-y", this._innerPath], { stdio: ["ignore", "pipe", "pipe"] });
+      proc.on("close", resolve);
+      proc.on("error", () => resolve(1));
+    });
+  }
 }
 
 class DmgArchive extends SevenZipReadOnlyArchive {

@@ -271,21 +271,16 @@
     }
 
     async function pruneEmptyDirs() {
-      let changed = true;
-      while (changed) {
-        changed = false;
-        const entries = archive.getEntries();
-        const dirs = entries.filter((e) => e.isDirectory);
-        for (const dir of dirs) {
-          const hasChildren = entries.some((e) => e.entryName !== dir.entryName && e.entryName.startsWith(dir.entryName));
-          if (!hasChildren) {
-            archive.deleteFile(dir.entryName);
-            changed = true;
-            break;
-          }
+      const entries = archive.getEntries();
+      const hasChildren = new Set();
+      for (const e of entries) {
+        const parts = e.entryName.replace(/\/$/, "").split("/");
+        for (let i = 1; i < parts.length; i++) {
+          hasChildren.add(parts.slice(0, i).join("/") + "/");
         }
-        if (changed) await new Promise((r) => setTimeout(r, 0));
       }
+      const toDelete = entries.filter((e) => e.isDirectory && !hasChildren.has(e.entryName));
+      for (const e of toDelete) archive.deleteFile(e.entryName);
     }
 
     function buildVisibleList() {
@@ -925,31 +920,94 @@
       } else {
         const allEntries = archive.getEntries();
         const total = allEntries.length;
-        for (let i = 0; i < total; i++) {
-          const entry = allEntries[i];
-          if (entry.isDirectory) {
-            newArchiveObj.addFile(entry.entryName, Buffer.alloc(0));
-          } else if (entry.size > 2 * 1024 * 1024 * 1024) {
-            copySkipped.push(entry.entryName + " (" + formatBytes(entry.size) + ")");
-          } else {
-            try {
-              const data = archive.getData(entry.entryName);
-              if (data) newArchiveObj.addFile(entry.entryName, data);
-              else copySkipped.push(entry.entryName + " (no data)");
-            } catch (err) {
-              if (err.message && err.message.includes("allocate memory")) {
-                ipcRenderer.invoke("show-message", { type: "error", title: "Save Failed", message: "Ran out of memory while copying entries.\nThe archive is too large for " + newArchiveObj.format.toUpperCase() + " format.\nUse a TAR-based format instead." });
-                saving = false;
-                ipcRenderer.invoke("set-saving", false);
-                hideProgress();
-                render();
-                return;
+        const isTarTarget = newArchiveObj.format === "tar";
+        let tempDataFile = null;
+        if (isTarTarget && archive._sourceFile) {
+          // Stream entries from ZIP to a single temp data file, record offsets
+          tempDataFile = path.join(require("os").tmpdir(), "archivesphynx-saveas-" + Date.now() + ".dat");
+          newArchiveObj._tempDataFile = tempDataFile;
+          const yauzl = require("yauzl");
+          let entryIdx = 0;
+          const datFd = fs.openSync(tempDataFile, "w");
+          fs.closeSync(datFd);
+          const datWs = fs.createWriteStream(tempDataFile);
+          let dataOffset = 0;
+          await new Promise((resolve, reject) => {
+            yauzl.open(archive._sourceFile, { lazyEntries: true, autoClose: true }, (err, zipfile) => {
+              if (err) { datWs.close(); return reject(err); }
+              zipfile.readEntry();
+              zipfile.on("entry", (ze) => {
+                entryIdx++;
+                if (entryIdx % 50 === 0) updateProgress(entryIdx, zipfile.entryCount);
+                if (ze.fileName.endsWith("/")) {
+                  newArchiveObj.addFile(ze.fileName, Buffer.alloc(0));
+                  zipfile.readEntry();
+                } else {
+                  zipfile.openReadStream(ze, (err2, stream) => {
+                    if (err2) { copySkipped.push(ze.fileName + " (" + err2.message + ")"); zipfile.readEntry(); return; }
+                    const entryOffset = dataOffset;
+                    let entrySize = 0;
+                    const onDrain = () => stream.resume();
+                    stream.on("data", (chunk) => {
+                      entrySize += chunk.length;
+                      dataOffset += chunk.length;
+                      if (!datWs.write(chunk)) {
+                        stream.pause();
+                        datWs.once("drain", onDrain);
+                      }
+                    });
+                    stream.on("end", () => {
+                      datWs.removeListener("drain", onDrain);
+                      newArchiveObj.entries.push({
+                        entryName: ze.fileName, isDirectory: false, size: entrySize,
+                        time: ze.getLastModDate(),
+                        mode: (ze.externalFileAttributes >>> 16) || 0o644,
+                        data: null, sourceFile: tempDataFile, offset: entryOffset, filePath: null,
+                      });
+                      zipfile.readEntry();
+                    });
+                    stream.on("error", (e) => { copySkipped.push(ze.fileName + " (" + e.message + ")"); zipfile.readEntry(); });
+                  });
+                }
+              });
+              zipfile.on("end", () => { datWs.end(); });
+              zipfile.on("error", (e) => { datWs.close(); reject(e); });
+            });
+            datWs.on("finish", resolve);
+            datWs.on("error", reject);
+          });
+          updateProgress(total, total);
+        } else {
+          // Non-TAR target or no source file: use in-memory copy
+          const total = allEntries.length;
+          for (let i = 0; i < total; i++) {
+            const entry = allEntries[i];
+            if (entry.isDirectory) {
+              newArchiveObj.addFile(entry.entryName, Buffer.alloc(0));
+            } else if (entry.size > 2 * 1024 * 1024 * 1024) {
+              copySkipped.push(entry.entryName + " (" + formatBytes(entry.size) + ")");
+            } else {
+              try {
+                const data = archive.getData(entry.entryName);
+                if (data) newArchiveObj.addFile(entry.entryName, data);
+                else copySkipped.push(entry.entryName + " (no data)");
+              } catch (err) {
+                if (err.message && err.message.includes("allocate memory")) {
+                  ipcRenderer.invoke("show-message", { type: "error", title: "Save Failed", message: "Ran out of memory while copying entries.\nThe archive is too large for " + newArchiveObj.format.toUpperCase() + " format.\nUse a TAR-based format instead." });
+                  saving = false;
+                  ipcRenderer.invoke("set-saving", false);
+                  hideProgress();
+                  render();
+                  return;
+                }
+                copySkipped.push(entry.entryName + " (" + err.message + ")");
               }
-              copySkipped.push(entry.entryName + " (" + err.message + ")");
+            }
+            if ((i + 1) % 50 === 0 || i === total - 1) {
+              updateProgress(i + 1, total);
+              await new Promise((r) => setTimeout(r, 0));
             }
           }
-          updateProgress(i + 1, total);
-          await new Promise((r) => setTimeout(r, 0));
         }
       }
       if (copySkipped.length > 0) {
@@ -970,6 +1028,7 @@
       } catch (err) {
         ipcRenderer.invoke("show-message", { type: "error", title: "Save Failed", message: err.message });
       }
+      if (archive._tempDataFile) { try { fs.unlinkSync(archive._tempDataFile); } catch {} }
       saving = false;
       ipcRenderer.invoke("set-saving", false);
       hideProgress();

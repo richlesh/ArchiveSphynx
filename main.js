@@ -332,10 +332,11 @@ ipcMain.handle("browse-file", async (_e) => {
   return result.canceled ? null : result.filePaths[0];
 });
 
-ipcMain.handle("tar-save", async (_e, { srcFile, entriesFile, outFile }) => {
+ipcMain.handle("tar-save", async (_e, { srcFile, entriesFile, outFile, tempDir }) => {
   const fsMod = require("fs");
   const entries = JSON.parse(fsMod.readFileSync(entriesFile, "utf8"));
-  fsMod.unlinkSync(entriesFile);
+  if (tempDir) { try { fsMod.unlinkSync(entriesFile); } catch {} }
+  else { fsMod.unlinkSync(entriesFile); }
   const fdIn = srcFile ? fsMod.openSync(srcFile, "r") : null;
   const fdOut = fsMod.openSync(outFile, "w");
   let outPos = 0;
@@ -432,6 +433,7 @@ ipcMain.handle("tar-save", async (_e, { srcFile, entriesFile, outFile }) => {
   fsMod.writeSync(fdOut, Buffer.alloc(1024), 0, 1024, outPos);
   if (fdIn !== null) fsMod.closeSync(fdIn);
   fsMod.closeSync(fdOut);
+  if (tempDir) { try { fsMod.rmSync(tempDir, { recursive: true, force: true }); } catch {} }
   return offsets;
 });
 
