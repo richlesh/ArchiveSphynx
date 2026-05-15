@@ -6,6 +6,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "test": "jest",
     "dist:mac:x64": "electron-builder --mac   --x64",
     "dist:mac:arm64": "electron-builder --mac   --arm64",
     "dist:win:x64": "electron-builder --win   --x64",
@@ -34,49 +35,85 @@
         "ext": "zip",
         "name": "ZIP Archive",
         "icon": "doc_icon_zip",
-        "mimeType": "application/zip"
+        "mimeType": "application/zip",
+        "role": "Editor"
       },
       {
         "ext": "7z",
         "name": "7-Zip Archive",
         "icon": "doc_icon_7zip",
-        "mimeType": "application/x-7z-compressed"
+        "mimeType": "application/x-7z-compressed",
+        "role": "Editor"
       },
       {
         "ext": "tar",
         "name": "TAR Archive",
         "icon": "doc_icon_tar",
-        "mimeType": "application/x-tar"
+        "mimeType": "application/x-tar",
+        "role": "Editor"
+      },
+      {
+        "ext": "tar.gz",
+        "name": "Gzipped TAR Archive",
+        "icon": "doc_icon_tar",
+        "mimeType": "application/gzip",
+        "role": "Editor"
       },
       {
         "ext": "tgz",
         "name": "Gzipped TAR Archive",
         "icon": "doc_icon_tar",
-        "mimeType": "application/gzip"
+        "mimeType": "application/gzip",
+        "role": "Editor"
+      },
+      {
+        "ext": "tar.bz2",
+        "name": "Bzip2 TAR Archive",
+        "icon": "doc_icon_tar",
+        "mimeType": "application/x-bzip2",
+        "role": "Editor"
       },
       {
         "ext": "tbz2",
         "name": "Bzip2 TAR Archive",
         "icon": "doc_icon_tar",
-        "mimeType": "application/x-bzip2"
+        "mimeType": "application/x-bzip2",
+        "role": "Editor"
+      },
+      {
+        "ext": "tar.xz",
+        "name": "XZ TAR Archive",
+        "icon": "doc_icon_tar",
+        "mimeType": "application/x-xz",
+        "role": "Editor"
       },
       {
         "ext": "txz",
         "name": "XZ TAR Archive",
         "icon": "doc_icon_tar",
-        "mimeType": "application/x-xz"
+        "mimeType": "application/x-xz",
+        "role": "Editor"
+      },
+      {
+        "ext": "tar.zst",
+        "name": "Zstandard TAR Archive",
+        "icon": "doc_icon_tar",
+        "mimeType": "application/zstd",
+        "role": "Editor"
       },
       {
         "ext": "tzst",
         "name": "Zstandard TAR Archive",
         "icon": "doc_icon_tar",
-        "mimeType": "application/zstd"
+        "mimeType": "application/zstd",
+        "role": "Editor"
       },
       {
         "ext": "t7z",
         "name": "7-Zip TAR Archive",
         "icon": "doc_icon_tar",
-        "mimeType": "application/x-7z-compressed"
+        "mimeType": "application/x-7z-compressed",
+        "role": "Editor"
       }
     ],
     "mac": {
@@ -118,13 +155,19 @@
   "type": "commonjs",
   "devDependencies": {
     "electron": "^41.3.0",
-    "electron-builder": "^26.8.1"
+    "electron-builder": "^26.8.1",
+    "jest": "^29.7.0"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
     "compressjs": "^1.0.3",
     "fzstd": "^0.1.1",
+    "lzma-native": "^8.0.6",
+    "lzma-purejs": "^0.9.3",
     "tar-stream": "^3.1.7",
-    "unbzip2-stream": "^1.4.3"
+    "unbzip2-stream": "^1.4.3",
+    "yauzl": "^2.10.0",
+    "yazl": "^2.5.1",
+    "zstdify": "^1.4.0"
   }
 }

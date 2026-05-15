@@ -13,6 +13,8 @@ jobs:
     permissions:
       id-token: write
       contents: write
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     strategy:
       matrix:
         arch: [x64, arm64]

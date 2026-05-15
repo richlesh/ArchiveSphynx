@@ -14,7 +14,7 @@ A cross-platform archive management tool.
 - Add, delete, rename, and extract entries
 - Read-only mode for non-writable formats (RAR, DEB, RPM, DMG, ISO)
 - Clean macOS metadata files (`.DS_Store`, `__MACOSX`) with one click
-- Configurable executable paths for gzip, bzip2, xz, zstd, and 7-zip
+- Configurable executable paths for gzip, bzip2, xz, zstd, and 7-zip for optimal performance
 - Save progress reporting for TAR archives
 - Settings window (save/load to `~/.archivesphynx-settings.json`)
 - License key validation (HMAC-SHA256 based)

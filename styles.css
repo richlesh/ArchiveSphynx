@@ -36,7 +36,9 @@ body {
 
 #toolbar button:hover { background: var(--button-hover); }
 #toolbar button:active { background: #555; }
-#toolbar button:disabled { background: #2a2a2a; color: #666; cursor: default; }
+#toolbar button:disabled { background: #2a2a2a; color: #666; cursor: default; filter: grayscale(1) opacity(0.5); }
+#btn-add:not(:disabled) .btn-icon { color: #fff; }
+.btn-icon { font-weight: bold; font-size: 14px; }
 
 .toolbar-sep {
   width: 1px;
@@ -163,7 +165,11 @@ body {
 #tree-table tr:hover { background: #2a2a2a; }
 #tree-table tr.selected { background: color-mix(in srgb, var(--selection-color) 20%, transparent); }
 #tree-table tr.selected:hover { background: color-mix(in srgb, var(--selection-color) 27%, transparent); }
+#tree-table tr.pending { font-style: italic; }
 #tree-table tr.drop-target { background: color-mix(in srgb, var(--selection-color) 13%, transparent); outline: 1px solid var(--selection-color); }
+#tree-table tr.drop-above { border-top: 2px solid var(--selection-color); }
+#tree-table tr.drop-below { border-bottom: 2px solid var(--selection-color); }
+#tree-table tr.drop-into { background: color-mix(in srgb, var(--selection-color) 13%, transparent); outline: 1px solid var(--selection-color); }
 
 #status-bar {
   display: flex;
