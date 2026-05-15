@@ -257,11 +257,49 @@ class ZipArchive {
     if (entry) zip.extractEntryTo(entry, dest, true, true);
   }
 
-  extractAll(dest) {
+  async extractAll(dest, onProgress) {
     if (!this._sourceFile) return;
-    const AdmZip = require("adm-zip");
-    const zip = new AdmZip(this._sourceFile);
-    zip.extractAllTo(dest, true);
+    const yauzl = require("yauzl");
+    await new Promise((resolve, reject) => {
+      yauzl.open(this._sourceFile, { lazyEntries: true, autoClose: true }, (err, zipfile) => {
+        if (err) return reject(err);
+        let count = 0;
+        zipfile.readEntry();
+        zipfile.on("entry", (ze) => {
+          count++;
+          if (onProgress) onProgress(count, zipfile.entryCount);
+          const outPath = path.join(dest, ze.fileName);
+          if (ze.fileName.endsWith("/")) {
+            fs.mkdirSync(outPath, { recursive: true });
+            zipfile.readEntry();
+          } else if (ze.uncompressedSize === 0) {
+            try { fs.mkdirSync(path.dirname(outPath), { recursive: true }); fs.writeFileSync(outPath, Buffer.alloc(0)); } catch {}
+            zipfile.readEntry();
+          } else {
+            let done = false;
+            const next = () => { if (!done) { done = true; zipfile.readEntry(); } };
+            try {
+              fs.mkdirSync(path.dirname(outPath), { recursive: true });
+            } catch { next(); return; }
+            try {
+              if (fs.existsSync(outPath)) { next(); return; }
+              zipfile.openReadStream(ze, (err2, stream) => {
+                if (err2) { next(); return; }
+                try {
+                  const ws = fs.createWriteStream(outPath);
+                  stream.pipe(ws);
+                  ws.on("finish", next);
+                  ws.on("error", next);
+                  stream.on("error", () => { ws.destroy(); next(); });
+                } catch { next(); }
+              });
+            } catch { next(); }
+          }
+        });
+        zipfile.on("end", resolve);
+        zipfile.on("error", reject);
+      });
+    });
   }
 
   testIntegrity() {
