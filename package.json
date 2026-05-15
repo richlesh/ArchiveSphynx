@@ -6,7 +6,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "jest",
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
     "dist:mac:x64": "electron-builder --mac   --x64",
     "dist:mac:arm64": "electron-builder --mac   --arm64",
     "dist:win:x64": "electron-builder --win   --x64",

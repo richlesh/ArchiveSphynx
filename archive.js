@@ -320,7 +320,7 @@ class TarArchive {
         await new Promise((resolve, reject) => {
           const proc = spawn(getSevenZipPath(), ["e", "-so", filePath], { stdio: ["ignore", outFd, "pipe"] });
           proc.on("close", (code) => { fs.closeSync(outFd); code === 0 ? resolve() : reject(new Error("7z decompression failed")); });
-          proc.on("error", (err) => { fs.closeSync(outFd); reject(err); });
+          proc.on("error", () => {});
         });
       } else if (this.compression === "gz") {
         const { spawn } = require("child_process");
@@ -328,7 +328,7 @@ class TarArchive {
         const ok = await new Promise((resolve) => {
           const proc = spawn(getGzipPath(), ["-d", "-c", filePath], { stdio: ["ignore", outFd, "pipe"] });
           proc.on("close", (code) => { fs.closeSync(outFd); resolve(code === 0); });
-          proc.on("error", () => { fs.closeSync(outFd); resolve(false); });
+          proc.on("error", () => resolve(false));
         });
         if (!ok) {
           const input = fs.readFileSync(filePath);
@@ -340,7 +340,7 @@ class TarArchive {
         const ok = await new Promise((resolve, reject) => {
           const proc = spawn(getBzip2Path(), ["-d", "-c", filePath], { stdio: ["ignore", outFd, "pipe"] });
           proc.on("close", (code) => { fs.closeSync(outFd); resolve(code === 0); });
-          proc.on("error", () => { fs.closeSync(outFd); resolve(false); });
+          proc.on("error", () => resolve(false));
         });
         if (!ok) {
           const buf = fs.readFileSync(filePath);
@@ -352,7 +352,7 @@ class TarArchive {
         const ok = await new Promise((resolve) => {
           const proc = spawn(getXzPath(), ["-d", "-c", filePath], { stdio: ["ignore", outFd, "pipe"] });
           proc.on("close", (code) => { fs.closeSync(outFd); resolve(code === 0); });
-          proc.on("error", () => { fs.closeSync(outFd); resolve(false); });
+          proc.on("error", () => resolve(false));
         });
         if (!ok) {
           const buf = fs.readFileSync(filePath);
@@ -365,7 +365,7 @@ class TarArchive {
         const ok = await new Promise((resolve) => {
           const proc = spawn(getZstdPath(), ["-d", "-c", filePath], { stdio: ["ignore", outFd, "pipe"] });
           proc.on("close", (code) => { fs.closeSync(outFd); resolve(code === 0); });
-          proc.on("error", () => { fs.closeSync(outFd); resolve(false); });
+          proc.on("error", () => resolve(false));
         });
         if (!ok) {
           const buf = fs.readFileSync(filePath);
@@ -553,7 +553,7 @@ class TarArchive {
         const ok = await new Promise((resolve, reject) => {
           const proc = spawn(getBzip2Path(), ["-k", "-c", tempTar], { stdio: ["ignore", outFd, "pipe"] });
           proc.on("close", (code) => { fs.closeSync(outFd); resolve(code === 0); });
-          proc.on("error", () => { fs.closeSync(outFd); resolve(false); });
+          proc.on("error", () => resolve(false));
         });
         if (!ok) {
           bzip2FallbackUsed = true;
@@ -572,7 +572,7 @@ class TarArchive {
         const ok = await new Promise((resolve) => {
           const proc = spawn(cmd, args, { stdio: ["ignore", outFd, "pipe"] });
           proc.on("close", (code) => { fs.closeSync(outFd); resolve(code === 0); });
-          proc.on("error", () => { fs.closeSync(outFd); resolve(false); });
+          proc.on("error", () => resolve(false));
         });
         if (!ok) {
           const tarBuf = fs.readFileSync(tempTar);
@@ -582,8 +582,9 @@ class TarArchive {
             const compressed = await xzCompress(tarBuf);
             fs.writeFileSync(filePath, compressed);
           } else if (this.compression === "zst") {
-            const { compress } = require("zstdify");
-            fs.writeFileSync(filePath, compress(tarBuf));
+            const { compress } = require("./zstd-compress");
+            const compressed = await compress(tarBuf);
+            fs.writeFileSync(filePath, compressed);
           }
         }
       }
