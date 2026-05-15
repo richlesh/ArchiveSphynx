@@ -1,0 +1,3 @@
+jest.mock("electron", () => ({ ipcRenderer: { invoke: jest.fn() } }), { virtual: true });
+const { runStressTest } = require("./stress-helper");
+describe("Stress: tgz", () => { runStressTest("tgz"); });
