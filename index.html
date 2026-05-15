@@ -875,27 +875,78 @@
         }
         pendingFiles = [];
       } else if (newArchiveObj.format === "7z") {
-        // 7z: extract source to temp dir, then archive directly (avoids memory buffering)
+        // 7z: stream source to temp dir, then archive directly
         const os = require("os");
         const tempDir = path.join(os.tmpdir(), "archivesphynx-saveas-" + Date.now());
         fs.mkdirSync(tempDir, { recursive: true });
         try {
           updateProgressLabel("Extracting…");
           await new Promise((r) => setTimeout(r, 0));
-          await archive.extractAll(tempDir, updateProgress);
+          if (archive._sourceFile && archive.format === "zip") {
+            // Stream ZIP entries directly via yauzl (handles large files, no 2GB limit)
+            const yauzl = require("yauzl");
+            let count = 0;
+            await new Promise((resolve, reject) => {
+              yauzl.open(archive._sourceFile, { lazyEntries: true, autoClose: true }, (err, zipfile) => {
+                if (err) return reject(err);
+                zipfile.readEntry();
+                zipfile.on("entry", (ze) => {
+                  count++;
+                  if (count % 50 === 0) updateProgress(count, zipfile.entryCount);
+                  const outPath = path.join(tempDir, ze.fileName);
+                  if (ze.fileName.endsWith("/")) {
+                    try { fs.mkdirSync(outPath, { recursive: true }); } catch {}
+                    zipfile.readEntry();
+                  } else if (ze.uncompressedSize === 0) {
+                    try { fs.mkdirSync(path.dirname(outPath), { recursive: true }); fs.writeFileSync(outPath, Buffer.alloc(0)); } catch {}
+                    zipfile.readEntry();
+                  } else {
+                    let done = false;
+                    const next = () => { if (!done) { done = true; zipfile.readEntry(); } };
+                    try {
+                      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+                    } catch { next(); return; }
+                    try {
+                      if (fs.existsSync(outPath)) { next(); return; }
+                      zipfile.openReadStream(ze, (err2, stream) => {
+                        if (err2) { next(); return; }
+                        const ws = fs.createWriteStream(outPath);
+                        stream.pipe(ws);
+                        ws.on("finish", next);
+                        ws.on("error", next);
+                        stream.on("error", () => { ws.destroy(); next(); });
+                      });
+                    } catch { next(); }
+                  }
+                });
+                zipfile.on("end", resolve);
+                zipfile.on("error", reject);
+              });
+            });
+          } else {
+            await archive.extractAll(tempDir, updateProgress);
+          }
           for (const pf of pendingFiles) {
             const dest = path.join(tempDir, pf.entryName);
             if (pf.isDirectory) fs.mkdirSync(dest, { recursive: true });
             else { fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.copyFileSync(pf.fsPath, dest); }
           }
           pendingFiles = [];
-          updateProgressLabel("Compressing…");
+          showProgress("Compressing…", false);
           await new Promise((r) => setTimeout(r, 0));
           if (fs.existsSync(result)) fs.unlinkSync(result);
           const { spawn } = require("child_process");
           const { getSevenZipPath } = require("./archive");
           await new Promise((resolve, reject) => {
-            const proc = spawn(getSevenZipPath(), ["a", "-t7z", result, path.join(tempDir, "*")], { stdio: ["ignore", "pipe", "pipe"] });
+            const proc = spawn(getSevenZipPath(), ["a", "-t7z", "-bsp1", result, path.join(tempDir, "*")], { stdio: ["ignore", "pipe", "pipe"] });
+            let itemCount = 0;
+            proc.stdout.on("data", (chunk) => {
+              const text = chunk.toString();
+              const match = text.match(/(\d+)%/);
+              if (match && itemCount) updateProgress(Math.round(parseInt(match[1]) / 100 * itemCount), itemCount);
+              const items = text.match(/Items to compress: (\d+)/);
+              if (items) itemCount = parseInt(items[1]);
+            });
             proc.on("close", (code) => code === 0 ? resolve() : reject(new Error("7z compression failed")));
             proc.on("error", reject);
           });
