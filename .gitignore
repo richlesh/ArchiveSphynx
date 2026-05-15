@@ -3,5 +3,3 @@ dist/
 .DS_Store
 .idea/
 packages/sphynx/build/
-packages/sphynx/lib/sphynx.js
-packages/sphynx/lib/sphynx.wasm

@@ -29,6 +29,7 @@
       "*.png",
       "*.icns",
       "*.ico",
+      "packages/sphynx/lib/**",
       "node_modules/**"
     ],
     "fileAssociations": [
@@ -160,6 +161,7 @@
     "jest": "^29.7.0"
   },
   "dependencies": {
+    "sphynx": "file:packages/sphynx",
     "adm-zip": "^0.5.16",
     "compressjs": "^1.0.3",
     "fzstd": "^0.1.1",
