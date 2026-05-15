@@ -20,6 +20,7 @@
     "productName": "ArchiveSphynx",
     "icon": "app_icon",
     "artifactName": "ArchiveSphynx-${version}-${arch}.${ext}",
+    "npmRebuild": false,
     "files": [
       "*.js",
       "*.html",
