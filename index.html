@@ -880,7 +880,7 @@
         const tempDir = path.join(os.tmpdir(), "archivesphynx-saveas-" + Date.now());
         fs.mkdirSync(tempDir, { recursive: true });
         try {
-          updateProgressLabel("Extracting…");
+          showProgress("Extracting…", false);
           await new Promise((r) => setTimeout(r, 0));
           if (archive._sourceFile && archive.format === "zip") {
             // Stream ZIP entries directly via yauzl (handles large files, no 2GB limit)
@@ -910,11 +910,11 @@
                       if (fs.existsSync(outPath)) { next(); return; }
                       zipfile.openReadStream(ze, (err2, stream) => {
                         if (err2) { next(); return; }
-                        const ws = fs.createWriteStream(outPath);
-                        stream.pipe(ws);
-                        ws.on("finish", next);
-                        ws.on("error", next);
-                        stream.on("error", () => { ws.destroy(); next(); });
+                        let fd;
+                        try { fd = fs.openSync(outPath, "wx"); } catch { next(); return; }
+                        stream.on("data", (chunk) => { try { fs.writeSync(fd, chunk); } catch {} });
+                        stream.on("end", () => { fs.closeSync(fd); next(); });
+                        stream.on("error", () => { try { fs.closeSync(fd); } catch {} next(); });
                       });
                     } catch { next(); }
                   }
@@ -1195,12 +1195,12 @@
       const dest = result[0];
       saving = true;
       ipcRenderer.invoke("set-saving", true);
-      showProgress("Extracting…", true);
+      showProgress("Extracting…", false);
       updateToolbar();
       await new Promise((r) => setTimeout(r, 0));
       try {
         if (selectedPaths.size === 0) {
-          await archive.extractAll(dest);
+          await archive.extractAll(dest, updateProgress);
         } else {
           [...selectedPaths].forEach((p) => {
             const entry = archive.getEntry(p);
