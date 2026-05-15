@@ -1,0 +1,16 @@
+{
+  "name": "sphynx",
+  "version": "0.1.0",
+  "description": "libarchive compiled to WASM — read/write ZIP, TAR, 7z, RAR with gzip, bzip2, xz, zstd compression",
+  "main": "lib/index.js",
+  "scripts": {
+    "build": "./build.sh",
+    "test": "node test.js"
+  },
+  "files": [
+    "lib/"
+  ],
+  "keywords": ["archive", "zip", "tar", "7z", "rar", "wasm", "libarchive", "compression"],
+  "author": "Richard Lesh",
+  "license": "LGPL-3.0-or-later"
+}
