@@ -12,7 +12,7 @@
     <button id="btn-save" title="Save Archive" disabled>&#128190; Save</button>
     <button id="btn-saveas" title="Save As..." disabled>&#128190; Save As…</button>
     <div class="toolbar-sep"></div>
-    <button id="btn-add" title="Add Files" disabled>&#10133; Add</button>
+    <button id="btn-add" title="Add Files" disabled><span class="btn-icon">+</span> Add</button>
     <button id="btn-folder" title="New Folder" disabled>&#128193; New Folder</button>
     <button id="btn-delete" title="Delete Selected" disabled>&#128465; Delete</button>
     <div class="toolbar-sep"></div>
@@ -43,19 +43,19 @@
     const { ipcRenderer, webUtils } = require("electron");
     const path = require("path");
     const fs = require("fs");
-    const { createArchive, detectFormat, setZstdPath, setBzip2Path, setGzipPath, setXzPath, setSevenZipPath, isZstdAvailable, wasBzip2FallbackUsed } = require("./archive");
+    const { createArchive, detectFormat, setZstdPath, setBzip2Path, setGzipPath, setXzPath, setSevenZipPath, isZstdAvailable, isZstdCliAvailable, wasBzip2FallbackUsed } = require("./archive");
 
     function getSaveFilters() {
       const filters = [
-        { name: "ZIP Archives", extensions: ["zip"] },
-        { name: "7z Archives", extensions: ["7z"] },
-        { name: "JAR Archives", extensions: ["jar"] },
-        { name: "TAR Archives", extensions: ["tar"] },
+        { name: "ZIP Archive", extensions: ["zip"] },
+        { name: "7z Archive", extensions: ["7z"] },
+        { name: "JAR Archive", extensions: ["jar"] },
+        { name: "TAR Archive", extensions: ["tar"] },
         { name: "Compressed TAR (gzip)", extensions: ["tgz"] },
         { name: "Compressed TAR (bzip2)", extensions: ["tbz2"] },
         { name: "Compressed TAR (xz)", extensions: ["txz"] },
       ];
-      if (isZstdAvailable()) filters.push({ name: "Compressed TAR (zstd)", extensions: ["tzst"] });
+      if (isZstdCliAvailable()) filters.push({ name: "Compressed TAR (zstd)", extensions: ["tzst"] });
       filters.push({ name: "Compressed TAR (7z)", extensions: ["t7z"] });
       return filters;
     }
@@ -80,7 +80,7 @@
       { id: "name", label: "Name", getter: (e) => e.entryName },
       { id: "modified", label: "Modified", getter: (e) => e.time ? new Date(e.time).toLocaleString() : "" },
       { id: "size", label: "Size", getter: (e) => e.isDirectory ? "" : formatBytes(e.size || 0) },
-      { id: "compressed", label: "Compressed", getter: (e) => e.isDirectory ? "" : formatBytes(e.compressedSize || 0) },
+      { id: "compressed", label: "Compressed", getter: (e) => e.isDirectory ? "" : (e._pending ? "---" : (e.compressedSize < 0 ? "---" : formatBytes(e.compressedSize || 0))) },
       { id: "attributes", label: "Attributes", getter: (e) => formatAttr(e.attr) },
       { id: "type", label: "Type", getter: (e) => e.isDirectory ? "Folder" : extType(e.entryName) },
       { id: "method", label: "Method", getter: (e) => e.isDirectory ? "" : (e.method || "") },
@@ -96,6 +96,11 @@
     let lastClickedIdx = -1;
     let collapsedPaths = new Set();
     let dirty = false;
+
+    function collapseAll() {
+      collapsedPaths.clear();
+      archive.getEntries().filter((e) => e.isDirectory).forEach((e) => collapsedPaths.add(e.entryName));
+    }
 
     function isReadOnly() {
       return archive && ["rar", "deb", "rpm", "dmg", "iso"].includes(archive.format);
@@ -286,10 +291,22 @@
     function buildVisibleList() {
       if (!archive) return [];
       const entries = archive.getEntries();
+      // Add pending files as synthetic entries
+      const pendingEntries = pendingFiles.map((pf) => ({
+        entryName: pf.entryName,
+        isDirectory: pf.isDirectory,
+        size: pf.size || 0,
+        compressedSize: 0,
+        time: null,
+        attr: 0,
+        method: "",
+        _pending: true,
+      }));
+      const allEntries = entries.concat(pendingEntries);
       // Ensure implicit parent directories exist in the children map
       const children = new Map();
-      const knownDirs = new Set(entries.filter((e) => e.isDirectory).map((e) => e.entryName));
-      entries.forEach((e) => {
+      const knownDirs = new Set(allEntries.filter((e) => e.isDirectory).map((e) => e.entryName));
+      allEntries.forEach((e) => {
         // Synthesize missing parent directories
         const parts = e.entryName.replace(/\/$/, "").split("/");
         for (let i = 1; i < parts.length; i++) {
@@ -303,7 +320,7 @@
         }
       });
       // Group entries by parent folder
-      entries.forEach((e) => {
+      allEntries.forEach((e) => {
         const parent = getParent(e.entryName);
         if (!children.has(parent)) children.set(parent, []);
         children.get(parent).push(e);
@@ -339,6 +356,7 @@
         tr.dataset.path = entry.entryName;
         tr.draggable = !isReadOnly();
         if (selectedPaths.has(entry.entryName)) tr.classList.add("selected");
+        if (entry._pending) tr.classList.add("pending");
         tr.addEventListener("dragstart", (e) => {
           if (isReadOnly()) { e.preventDefault(); return; }
           const paths = selectedPaths.has(entry.entryName) ? [...selectedPaths] : [entry.entryName];
@@ -350,17 +368,38 @@
           if (e.dataTransfer.types.includes("application/x-archivesphynx-entry")) {
             e.preventDefault();
             e.dataTransfer.dropEffect = "move";
-            tr.classList.add("drop-target");
+            tr.classList.remove("drop-above", "drop-below", "drop-into");
+            const rect = tr.getBoundingClientRect();
+            const y = (e.clientY - rect.top) / rect.height;
+            if (entry.isDirectory && y > 0.25 && y < 0.75) {
+              tr.classList.add("drop-into");
+            } else if (y < 0.5) {
+              tr.classList.add("drop-above");
+            } else {
+              tr.classList.add("drop-below");
+            }
           } else if (e.dataTransfer.types.includes("Files") && archive) {
             e.preventDefault();
             e.dataTransfer.dropEffect = "copy";
-            tr.classList.add("drop-target");
+            tr.classList.remove("drop-above", "drop-below", "drop-into");
+            const rect = tr.getBoundingClientRect();
+            const y = (e.clientY - rect.top) / rect.height;
+            if (entry.isDirectory && y > 0.25 && y < 0.75) {
+              tr.classList.add("drop-into");
+            } else if (y < 0.5) {
+              tr.classList.add("drop-above");
+            } else {
+              tr.classList.add("drop-below");
+            }
           }
         });
-        tr.addEventListener("dragleave", () => tr.classList.remove("drop-target"));
+        tr.addEventListener("dragleave", () => tr.classList.remove("drop-above", "drop-below", "drop-into"));
         tr.addEventListener("drop", async (e) => {
-          tr.classList.remove("drop-target");
+          tr.classList.remove("drop-above", "drop-below", "drop-into");
           if (isReadOnly()) return;
+          const rect = tr.getBoundingClientRect();
+          const y = (e.clientY - rect.top) / rect.height;
+          const wasInto = entry.isDirectory && y > 0.25 && y < 0.75;
           const raw = e.dataTransfer.getData("application/x-archivesphynx-entry");
           if (raw) {
             e.preventDefault();
@@ -370,7 +409,7 @@
             ipcRenderer.invoke("set-saving", true);
             showProgress("Moving…", true);
             updateToolbar();
-            const destFolder = entry.isDirectory ? entry.entryName : getParent(entry.entryName);
+            const destFolder = (wasInto && entry.isDirectory) ? entry.entryName : getParent(entry.entryName);
             await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
             try {
               JSON.parse(raw).forEach((srcPath) => moveEntry(srcPath, destFolder, true));
@@ -383,19 +422,21 @@
               hideProgress();
               render();
             }
-          } else if (e.dataTransfer.files.length) {
+          } else if (e.dataTransfer.types.includes("Files")) {
             e.preventDefault();
             e.stopPropagation();
-            if (!archive || !archivePath || saving) return;
+            if (!archive || saving) return;
+            const files = [...e.dataTransfer.files];
+            if (!files.length) return;
             saving = true;
             ipcRenderer.invoke("set-saving", true);
-            const targetFolder = entry.isDirectory ? entry.entryName : getParent(entry.entryName);
+            const targetFolder = (wasInto && entry.isDirectory) ? entry.entryName : getParent(entry.entryName);
             showProgress("Adding…", true);
             updateToolbar();
             await new Promise((r) => setTimeout(r, 0));
             try {
               addCount = 0; skippedFiles = [];
-              for (const file of [...e.dataTransfer.files]) {
+              for (const file of files) {
                 await addPathToZip(webUtils.getPathForFile(file), targetFolder);
               }
             } finally {
@@ -440,6 +481,8 @@
                   const allEntries = archive.getEntries();
                   allEntries.filter((en) => en.isDirectory && en.entryName.startsWith(entry.entryName))
                     .forEach((en) => { collapse ? collapsedPaths.add(en.entryName) : collapsedPaths.delete(en.entryName); });
+                  pendingFiles.filter((pf) => pf.isDirectory && pf.entryName.startsWith(entry.entryName))
+                    .forEach((pf) => { collapse ? collapsedPaths.add(pf.entryName) : collapsedPaths.delete(pf.entryName); });
                 }
                 if (collapse) collapsedPaths.add(entry.entryName);
                 else collapsedPaths.delete(entry.entryName);
@@ -502,7 +545,21 @@
       const isDir = srcPath.endsWith("/");
       const srcParent = getParent(srcPath);
       const newPath = destFolder + baseName + (isDir ? "/" : "");
+      const altPath = isDir ? newPath.slice(0, -1) : newPath + "/";
+      if (archive.getEntry(newPath) || archive.getEntry(altPath) || pendingFiles.some((pf) => pf.entryName === newPath || pf.entryName === altPath)) {
+        ipcRenderer.invoke("show-message", { type: "warning", title: "Cannot Move", message: "An item named \"" + baseName + "\" already exists in the destination folder." });
+        return;
+      }
+      const newNorm = newPath.replace(/\/$/, "").toLowerCase();
+      if (archive.getEntries().some((e) => e.entryName !== srcPath && e.entryName.replace(/\/$/, "").toLowerCase() === newNorm)
+        || pendingFiles.some((pf) => pf.entryName !== srcPath && pf.entryName.replace(/\/$/, "").toLowerCase() === newNorm)) {
+        ipcRenderer.invoke("show-message", { type: "warning", title: "Case Conflict", message: "An item with a similar name differing only in case already exists.\nThis may cause issues when extracting on case-insensitive filesystems (macOS, Windows)." });
+      }
       archive.renameEntry(srcPath, newPath);
+      pendingFiles.forEach((pf) => {
+        if (pf.entryName === srcPath) pf.entryName = newPath;
+        else if (isDir && pf.entryName.startsWith(srcPath)) pf.entryName = newPath + pf.entryName.slice(srcPath.length);
+      });
       // Move matching __MACOSX entries
       if (isDir) {
         const macSrc = "__MACOSX/" + srcPath;
@@ -536,7 +593,7 @@
       input.select();
 
       let committed = false;
-      const commit = () => {
+      const commit = async () => {
         if (committed) return;
         committed = true;
         const newName = input.value.trim();
@@ -545,9 +602,21 @@
           const oldPath = entry.entryName;
           const isDir = entry.isDirectory;
           const newPath = parent + newName + (isDir ? "/" : "");
-          // Revert if a folder with that name already exists
-          if (isDir && archive.getEntry(newPath)) { render(); return; }
+          // Revert if an entry with that name already exists (check both file and folder forms)
+          const altPath = isDir ? newPath.slice(0, -1) : newPath + "/";
+          if (newPath !== oldPath && (archive.getEntry(newPath) || archive.getEntry(altPath) || pendingFiles.some((pf) => pf.entryName === newPath || pf.entryName === altPath))) { render(); return; }
+          // Warn on case-only collision (normalize trailing slash for cross-type comparison)
+          const newNorm = newPath.replace(/\/$/, "").toLowerCase();
+          const caseCollision = archive.getEntries().some((e) => e.entryName !== oldPath && e.entryName.replace(/\/$/, "").toLowerCase() === newNorm)
+            || pendingFiles.some((pf) => pf.entryName !== oldPath && pf.entryName.replace(/\/$/, "").toLowerCase() === newNorm);
+          if (caseCollision) {
+            ipcRenderer.invoke("show-message", { type: "warning", title: "Case Conflict", message: "An item with a similar name differing only in case already exists.\nThis may cause issues when extracting on case-insensitive filesystems (macOS, Windows)." });
+          }
           archive.renameEntry(oldPath, newPath);
+          pendingFiles.forEach((pf) => {
+            if (pf.entryName === oldPath) pf.entryName = newPath;
+            else if (isDir && pf.entryName.startsWith(oldPath)) pf.entryName = newPath + pf.entryName.slice(oldPath.length);
+          });
           selectedPaths.delete(oldPath);
           selectedPaths.add(newPath);
           refreshZip();
@@ -569,8 +638,9 @@
 
     function updateStatus() {
       const entries = archive ? archive.getEntries() : [];
+      const pendingFileCount = pendingFiles.filter((pf) => !pf.isDirectory).length;
       const files = entries.filter((e) => !e.isDirectory);
-      document.getElementById("status-files").textContent = files.length + " file" + (files.length !== 1 ? "s" : "");
+      document.getElementById("status-files").textContent = (files.length + pendingFileCount) + " file" + ((files.length + pendingFileCount) !== 1 ? "s" : "");
       const totalCompressed = files.reduce((sum, e) => sum + (e.header?.compressedSize || 0), 0);
       document.getElementById("status-size").textContent = formatBytes(totalCompressed) + " compressed";
       updateToolbar();
@@ -664,6 +734,7 @@
       archive = createArchive(archivePath);
       if (!archive) return;
       archive.create();
+      pendingFiles = [];
       try {
         await saveZip();
       } catch (e) {
@@ -692,6 +763,7 @@
       } else {
         archivePath = result[0];
         archive = createArchive(archivePath);
+        pendingFiles = [];
         saving = true;
         ipcRenderer.invoke("set-saving", true);
         showProgress("Loading…", true);
@@ -714,6 +786,7 @@
         if (wasBzip2FallbackUsed()) {
           ipcRenderer.invoke("show-message", { type: "warning", title: "Performance Warning", message: "Bzip2 CLI not found. Using slower JavaScript fallback.\nInstall bzip2 and configure its path in Settings for better performance." });
         }
+        collapseAll();
         selectedPaths.clear();
         ipcRenderer.invoke("register-open-file", archivePath);
         setDirty(false);
@@ -723,15 +796,44 @@
     }
 
     let saving = false;
+    let pendingFiles = []; // { entryName, fsPath, isDirectory }
 
     async function saveArchive() {
       if (!archive || !archivePath || saving) return;
       saving = true;
       ipcRenderer.invoke("set-saving", true);
-      showProgress("Saving…", true);
+      showProgress("Adding files…", false);
       updateToolbar();
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       try {
+        const total = pendingFiles.length;
+        for (let i = 0; i < total; i++) {
+          const pf = pendingFiles[i];
+          if (pf.isDirectory) {
+            archive.addFile(pf.entryName, Buffer.alloc(0));
+          } else if (archive.format === "tar") {
+            archive.entries.push({
+              entryName: pf.entryName,
+              isDirectory: false,
+              size: pf.size,
+              time: new Date(),
+              mode: 0o644,
+              data: null,
+              sourceFile: null,
+              offset: 0,
+              filePath: pf.fsPath,
+            });
+          } else {
+            archive.addFile(pf.entryName, fs.readFileSync(pf.fsPath));
+          }
+          if ((i + 1) % 20 === 0 || i === total - 1) {
+            updateProgress(i + 1, total);
+            await new Promise((r) => setTimeout(r, 0));
+          }
+        }
+        pendingFiles = [];
+        updateProgressLabel("Compressing…");
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
         await saveZip();
         setDirty(false);
         if (wasBzip2FallbackUsed()) {
@@ -772,6 +874,11 @@
         for (const entry of archive.entries) {
           newArchiveObj.entries.push({ ...entry });
         }
+        for (const pf of pendingFiles) {
+          if (pf.isDirectory) newArchiveObj.addFile(pf.entryName, Buffer.alloc(0));
+          else newArchiveObj.addFile(pf.entryName, fs.readFileSync(pf.fsPath));
+        }
+        pendingFiles = [];
       } else if (newArchiveObj.format === "7z") {
         // 7z: extract source to temp dir, then archive directly (avoids memory buffering)
         const os = require("os");
@@ -781,6 +888,12 @@
           updateProgressLabel("Extracting…");
           await new Promise((r) => setTimeout(r, 0));
           await archive.extractAll(tempDir, updateProgress);
+          for (const pf of pendingFiles) {
+            const dest = path.join(tempDir, pf.entryName);
+            if (pf.isDirectory) fs.mkdirSync(dest, { recursive: true });
+            else { fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.copyFileSync(pf.fsPath, dest); }
+          }
+          pendingFiles = [];
           updateProgressLabel("Compressing…");
           await new Promise((r) => setTimeout(r, 0));
           if (fs.existsSync(result)) fs.unlinkSync(result);
@@ -800,6 +913,7 @@
         archivePath = result;
         archive = newArchiveObj;
         await archive.open(archivePath, updateProgress);
+        collapseAll();
         saving = false;
         ipcRenderer.invoke("set-saving", false);
         hideProgress();
@@ -809,7 +923,10 @@
         render();
         return;
       } else {
-        for (const entry of archive.getEntries()) {
+        const allEntries = archive.getEntries();
+        const total = allEntries.length;
+        for (let i = 0; i < total; i++) {
+          const entry = allEntries[i];
           if (entry.isDirectory) {
             newArchiveObj.addFile(entry.entryName, Buffer.alloc(0));
           } else if (entry.size > 2 * 1024 * 1024 * 1024) {
@@ -831,6 +948,8 @@
               copySkipped.push(entry.entryName + " (" + err.message + ")");
             }
           }
+          updateProgress(i + 1, total);
+          await new Promise((r) => setTimeout(r, 0));
         }
       }
       if (copySkipped.length > 0) {
@@ -839,6 +958,13 @@
       ipcRenderer.invoke("unregister-open-file", archivePath);
       archivePath = result;
       archive = newArchiveObj;
+      for (const pf of pendingFiles) {
+        if (pf.isDirectory) archive.addFile(pf.entryName, Buffer.alloc(0));
+        else archive.addFile(pf.entryName, fs.readFileSync(pf.fsPath));
+      }
+      pendingFiles = [];
+      updateProgressLabel("Compressing…");
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       try {
         await saveZip();
       } catch (err) {
@@ -873,12 +999,17 @@
           if (stat.isDirectory()) {
             await addPathToZip(filePath, folder);
           } else {
-            const name = path.basename(filePath);
-            archive.addFile(folder + name, fs.readFileSync(filePath));
-            addCount++;
-            if (addCount % 20 === 0) {
-              updateProgress(addCount, 0);
-              await new Promise((r) => setTimeout(r, 0));
+            if (stat.size > MAX_FILE_SIZE) {
+              skippedFiles.push(filePath + " (" + formatBytes(stat.size) + ")");
+            } else if (entryExists(folder + path.basename(filePath))) {
+              skippedFiles.push(filePath + " (duplicate name)");
+            } else {
+              pendingFiles.push({ entryName: folder + path.basename(filePath), fsPath: filePath, isDirectory: false, size: stat.size });
+              addCount++;
+              if (addCount % 200 === 0) {
+                updateProgress(addCount, 0);
+                await new Promise((r) => setTimeout(r, 0));
+              }
             }
           }
         }
@@ -898,7 +1029,7 @@
       const parent = getSelectedFolder();
       let name = "Untitled Folder";
       let suffix = 1;
-      while (archive.getEntry(parent + name + "/")) {
+      while (archive.getEntry(parent + name + "/") || pendingFiles.some((pf) => pf.entryName === parent + name + "/")) {
         name = "Untitled Folder " + suffix++;
       }
       const newPath = parent + name + "/";
@@ -928,8 +1059,10 @@
             archive.getEntries()
               .filter((e) => e.entryName.startsWith(p) && e.entryName !== p)
               .forEach((e) => archive.deleteFile(e.entryName));
+            pendingFiles = pendingFiles.filter((pf) => !pf.entryName.startsWith(p));
           }
           archive.deleteFile(p);
+          pendingFiles = pendingFiles.filter((pf) => pf.entryName !== p);
         });
         await pruneEmptyDirs();
         selectedPaths.clear();
@@ -982,7 +1115,7 @@
 
     async function testIntegrity() {
       if (!archive) return;
-      const errors = archive.testIntegrity();
+      const errors = await archive.testIntegrity();
       const fileCount = archive.getEntries().filter((e) => !e.isDirectory).length;
       const message = errors.length === 0
         ? "Archive integrity test passed.\nAll " + fileCount + " files are OK."
@@ -995,13 +1128,16 @@
 
     async function cleanMacOS() {
       if (!archive || saving) return;
+      const isMacJunk = (entryName) => {
+        const name = path.basename(entryName.replace(/\/$/, ""));
+        return entryName.startsWith("__MACOSX/") || entryName === "__MACOSX/" || name === ".DS_Store" || name.startsWith("._");
+      };
       const toDelete = archive.getEntries()
-        .filter((e) => {
-          const name = path.basename(e.entryName.replace(/\/$/, ""));
-          return e.entryName.startsWith("__MACOSX/") || e.entryName === "__MACOSX/" || name === ".DS_Store" || name.startsWith("._");
-        })
+        .filter((e) => isMacJunk(e.entryName))
         .map((e) => e.entryName);
-      if (toDelete.length === 0) return;
+      const pendingBefore = pendingFiles.length;
+      pendingFiles = pendingFiles.filter((pf) => !isMacJunk(pf.entryName));
+      if (toDelete.length === 0 && pendingFiles.length === pendingBefore) return;
       saving = true;
       ipcRenderer.invoke("set-saving", true);
       showProgress("Cleaning…", true);
@@ -1082,18 +1218,23 @@
       }
       if (e.dataTransfer.types.includes("application/x-archivesphynx-entry")) return;
       e.preventDefault();
-      if (!archive || !archivePath || saving) return;
+      if (!archive || saving) return;
       const files = [...e.dataTransfer.files];
       if (!files.length) return;
       // Determine target folder from drop target row
       let targetFolder = "";
       const row = e.target.closest("tr[data-path]");
-      if (row && row.dataset.path.endsWith("/")) {
-        targetFolder = row.dataset.path;
-      } else if (row) {
-        const parts = row.dataset.path.split("/");
-        parts.pop();
-        targetFolder = parts.length ? parts.join("/") + "/" : "";
+      if (row) {
+        const rect = row.getBoundingClientRect();
+        const y = (e.clientY - rect.top) / rect.height;
+        const rowPath = row.dataset.path;
+        if (rowPath.endsWith("/") && y > 0.25 && y < 0.75) {
+          targetFolder = rowPath;
+        } else {
+          const parts = rowPath.replace(/\/$/, "").split("/");
+          parts.pop();
+          targetFolder = parts.length ? parts.join("/") + "/" : "";
+        }
       }
       saving = true;
       ipcRenderer.invoke("set-saving", true);
@@ -1120,16 +1261,24 @@
     let skippedFiles = [];
     function showSkippedWarning() {
       if (skippedFiles.length > 0) {
-        ipcRenderer.invoke("show-message", { type: "warning", title: "Files Skipped", message: "The following files exceed the 2GB size limit and were not added:\n\n" + skippedFiles.join("\n") });
+        ipcRenderer.invoke("show-skipped-files", skippedFiles.join("\n"));
         skippedFiles = [];
       }
+    }
+    function entryExists(entryName) {
+      const alt = entryName.endsWith("/") ? entryName.slice(0, -1) : entryName + "/";
+      return !!(archive.getEntry(entryName) || archive.getEntry(alt)
+        || pendingFiles.some((pf) => pf.entryName === entryName || pf.entryName === alt));
     }
     async function addPathToZip(fsPath, targetFolder) {
       const stat = fs.statSync(fsPath);
       const name = path.basename(fsPath);
       if (stat.isDirectory()) {
         const folderPath = targetFolder + name + "/";
-        archive.addFile(folderPath, Buffer.alloc(0));
+        if (!entryExists(folderPath)) {
+          pendingFiles.push({ entryName: folderPath, fsPath, isDirectory: true, size: 0 });
+          collapsedPaths.add(folderPath);
+        }
         const children = fs.readdirSync(fsPath);
         for (const child of children) {
           await addPathToZip(path.join(fsPath, child), folderPath);
@@ -1137,15 +1286,16 @@
       } else if (stat.size > MAX_FILE_SIZE) {
         skippedFiles.push(fsPath + " (" + formatBytes(stat.size) + ")");
       } else {
-        try {
-          archive.addFile(targetFolder + name, fs.readFileSync(fsPath));
-        } catch (err) {
-          skippedFiles.push(fsPath + " (error: " + err.message + ")");
-        }
-        addCount++;
-        if (addCount % 20 === 0) {
-          updateProgress(addCount, 0);
-          await new Promise((r) => setTimeout(r, 0));
+        const entryName = targetFolder + name;
+        if (entryExists(entryName)) {
+          skippedFiles.push(fsPath + " (duplicate name)");
+        } else {
+          pendingFiles.push({ entryName, fsPath, isDirectory: false, size: stat.size });
+          addCount++;
+          if (addCount % 200 === 0) {
+            updateProgress(addCount, 0);
+            await new Promise((r) => setTimeout(r, 0));
+          }
         }
       }
     }
@@ -1154,6 +1304,7 @@
     ipcRenderer.on("open-archive-path", async (_e, filePath) => {
       archivePath = filePath;
       archive = createArchive(archivePath);
+      pendingFiles = [];
       saving = true;
       ipcRenderer.invoke("set-saving", true);
       showProgress("Loading…", true);
@@ -1176,6 +1327,7 @@
       if (wasBzip2FallbackUsed()) {
         ipcRenderer.invoke("show-message", { type: "warning", title: "Performance Warning", message: "Bzip2 CLI not found. Using slower JavaScript fallback.\nInstall bzip2 and configure its path in Settings for better performance." });
       }
+      collapseAll();
       selectedPaths.clear();
       ipcRenderer.invoke("register-open-file", archivePath);
       setDirty(false);
@@ -1186,6 +1338,7 @@
     ipcRenderer.on("new-archive-path", async (_e, filePath) => {
       archivePath = filePath;
       archive = createArchive(archivePath);
+      pendingFiles = [];
       archive.create();
       await saveZip();
       selectedPaths.clear();

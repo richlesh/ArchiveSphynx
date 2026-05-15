@@ -204,7 +204,7 @@ function buildMenu() {
         { label: "Save Archive", accelerator: "CmdOrCtrl+S", enabled: s.canSave, click: send("menu-save") },
         { label: "Save As…", accelerator: "CmdOrCtrl+Shift+S", enabled: s.hasArchive, click: send("menu-saveas") },
         { type: "separator" },
-        { label: "Add Files…", accelerator: "CmdOrCtrl+Shift+A", enabled: s.hasArchive, click: send("menu-add") },
+        { label: "Add Files/Folders…", accelerator: "CmdOrCtrl+Shift+A", enabled: s.hasArchive, click: send("menu-add") },
         { label: "New Folder", accelerator: "CmdOrCtrl+Shift+N", enabled: s.canNewFolder, click: send("menu-new-folder") },
         { label: "Delete", accelerator: "Delete", enabled: s.hasSelection, click: send("menu-delete") },
         { type: "separator" },
@@ -405,6 +405,19 @@ ipcMain.handle("tar-save", async (_e, { srcFile, entriesFile, outFile }) => {
           outPos += n;
           remaining -= n;
         }
+      } else if (entry.filePath) {
+        const fdSrc = fsMod.openSync(entry.filePath, "r");
+        let remaining = size;
+        let srcPos = 0;
+        while (remaining > 0) {
+          const toRead = Math.min(cpBuf.length, remaining);
+          const n = fsMod.readSync(fdSrc, cpBuf, 0, toRead, srcPos);
+          fsMod.writeSync(fdOut, cpBuf, 0, n, outPos);
+          srcPos += n;
+          outPos += n;
+          remaining -= n;
+        }
+        fsMod.closeSync(fdSrc);
       } else if (entry.data) {
         const buf = Buffer.from(entry.data, "base64");
         fsMod.writeSync(fdOut, buf, 0, buf.length, outPos);
@@ -425,6 +438,27 @@ ipcMain.handle("tar-save", async (_e, { srcFile, entriesFile, outFile }) => {
 ipcMain.handle("show-message", async (_e, opts) => {
   const win = BrowserWindow.fromWebContents(_e.sender);
   await dialog.showMessageBox(win, opts);
+});
+
+ipcMain.handle("show-skipped-files", async (_e, message) => {
+  const parent = BrowserWindow.fromWebContents(_e.sender);
+  const skipWin = new BrowserWindow({
+    width: 700,
+    height: 350,
+    resizable: true,
+    parent,
+    modal: true,
+    webPreferences: { nodeIntegration: true, contextIsolation: false },
+  });
+  skipWin.setMenuBarVisibility(false);
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Files Skipped</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,sans-serif;background:#1e1e1e;color:#e0e0e0;padding:20px;display:flex;flex-direction:column;height:100vh}
+h1{font-size:16px;margin-bottom:12px}pre{flex:1;overflow:auto;white-space:pre-wrap;word-break:break-all;font-size:12px;background:#252525;border-radius:6px;padding:12px;border:1px solid #3a3a3a}
+button{margin-top:12px;align-self:flex-end;padding:7px 24px;background:#0a84ff;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer}</style></head>
+<body><h1>\u26A0\uFE0F Files Skipped</h1><pre>The following files were not added:\n\n${message.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</pre>
+<button onclick="require('electron').ipcRenderer.invoke('close-skipped-files')">OK</button></body></html>`;
+  skipWin.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
+  ipcMain.handleOnce("close-skipped-files", () => skipWin?.close());
 });
 
 ipcMain.handle("show-test-result", async (_e, { type, message }) => {

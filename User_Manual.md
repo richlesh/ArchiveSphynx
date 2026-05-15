@@ -1,45 +1,88 @@
-# ArchiveSphynx User Manual
+# ArchiveSphinx User Manual
 
 **Version:** 1.1.0  
-**Product:** ArchiveSphynx  
+**Product:** ArchiveSphinx  
 **Author:** Richard Lesh / Glowing Cat Software
 
 ---
 
 ## Table of Contents
 
-1. [Introduction](#introduction)
-2. [Supported Platforms](#supported-platforms)
-3. [Supported Archive Formats](#supported-archive-formats)
-4. [Main Window Overview](#main-window-overview)
-5. [Quick Start](#quick-start)
-6. [Creating a New Archive](#creating-a-new-archive)
-7. [Opening an Archive](#opening-an-archive)
-8. [Browsing Archive Contents](#browsing-archive-contents)
-9. [Selecting Entries](#selecting-entries)
-10. [Adding Files and Folders](#adding-files-and-folders)
-11. [Creating Folders](#creating-folders)
-12. [Renaming Entries](#renaming-entries)
-13. [Moving and Reordering Entries](#moving-and-reordering-entries)
-14. [Deleting Entries](#deleting-entries)
-15. [Extracting Files](#extracting-files)
-16. [Saving Archives](#saving-archives)
-17. [Save As and Format Conversion](#save-as-and-format-conversion)
-18. [Testing Archive Integrity](#testing-archive-integrity)
-19. [Cleaning macOS Metadata](#cleaning-macos-metadata)
-20. [Settings](#settings)
-21. [Helper Compression Tools](#helper-compression-tools)
-22. [Read-Only Formats](#read-only-formats)
-23. [License Key and Donation Prompt](#license-key-and-donation-prompt)
-24. [Troubleshooting](#troubleshooting)
-25. [Privacy and Data Notes](#privacy-and-data-notes)
-26. [Keyboard and Mouse Shortcuts](#keyboard-and-mouse-shortcuts)
+- [ArchiveSphinx User Manual](#archivesphinx-user-manual)
+  - [Table of Contents](#table-of-contents)
+  - [Introduction](#introduction)
+  - [Supported Platforms](#supported-platforms)
+  - [Supported Archive Formats](#supported-archive-formats)
+    - [Open / Browse Formats](#open--browse-formats)
+    - [Writable Formats](#writable-formats)
+    - [Read-Only Formats](#read-only-formats)
+  - [Main Window Overview](#main-window-overview)
+    - [Toolbar](#toolbar)
+    - [Path Bar](#path-bar)
+    - [Archive Table](#archive-table)
+    - [Status Bar](#status-bar)
+  - [Quick Start](#quick-start)
+    - [Open an Existing Archive](#open-an-existing-archive)
+    - [Create a New Archive](#create-a-new-archive)
+  - [Creating a New Archive](#creating-a-new-archive)
+    - [New Archive Save Formats](#new-archive-save-formats)
+  - [Opening an Archive](#opening-an-archive)
+  - [Browsing Archive Contents](#browsing-archive-contents)
+    - [Expanding and Collapsing Folders](#expanding-and-collapsing-folders)
+    - [Columns](#columns)
+    - [Sorting](#sorting)
+    - [Reordering Columns](#reordering-columns)
+    - [Resizing Columns](#resizing-columns)
+  - [Selecting Entries](#selecting-entries)
+    - [Select One Entry](#select-one-entry)
+    - [Toggle Selection](#toggle-selection)
+    - [Select a Range](#select-a-range)
+    - [Clear Selection](#clear-selection)
+  - [Adding Files and Folders](#adding-files-and-folders)
+    - [Adding to a Specific Folder](#adding-to-a-specific-folder)
+    - [File Size Note](#file-size-note)
+  - [Creating Folders](#creating-folders)
+  - [Renaming Entries](#renaming-entries)
+  - [Moving and Reordering Entries](#moving-and-reordering-entries)
+    - [Move an Entry](#move-an-entry)
+    - [macOS Metadata Movement](#macos-metadata-movement)
+  - [Deleting Entries](#deleting-entries)
+  - [Extracting Files](#extracting-files)
+    - [Extract All](#extract-all)
+    - [Extract Selected](#extract-selected)
+  - [Saving Archives](#saving-archives)
+  - [Save As and Format Conversion](#save-as-and-format-conversion)
+  - [Testing Archive Integrity](#testing-archive-integrity)
+  - [Cleaning macOS Metadata](#cleaning-macos-metadata)
+  - [Settings](#settings)
+  - [Helper Compression Tools](#helper-compression-tools)
+    - [gzip / pigz](#gzip--pigz)
+    - [bzip2](#bzip2)
+    - [xz](#xz)
+    - [zstd](#zstd)
+    - [7-Zip](#7-zip)
+    - [Configuring Tool Paths](#configuring-tool-paths)
+  - [Read-Only Formats](#read-only-formats-1)
+  - [License Key and Donation Prompt](#license-key-and-donation-prompt)
+  - [Troubleshooting](#troubleshooting)
+    - [The Add, Delete, Rename, or Clean buttons are disabled](#the-add-delete-rename-or-clean-buttons-are-disabled)
+    - [The Save button is disabled](#the-save-button-is-disabled)
+    - [ArchiveSphinx cannot open an archive](#archivesphinx-cannot-open-an-archive)
+    - [Bzip2 performance warning appears](#bzip2-performance-warning-appears)
+    - [zstd archives are not available](#zstd-archives-are-not-available)
+    - [7z archives fail to open or save](#7z-archives-fail-to-open-or-save)
+    - [Drag and drop does not add files](#drag-and-drop-does-not-add-files)
+    - [Files were skipped while adding](#files-were-skipped-while-adding)
+    - [A window will not close](#a-window-will-not-close)
+  - [Privacy and Data Notes](#privacy-and-data-notes)
+  - [Keyboard and Mouse Shortcuts](#keyboard-and-mouse-shortcuts)
+  - [Best Practices](#best-practices)
 
 ---
 
 ## Introduction
 
-ArchiveSphynx is a cross-platform desktop archive management tool for macOS, Windows, and Linux.
+ArchiveSphinx is a cross-platform desktop archive management tool for Linux, macOS and Windows.
 
 It lets you:
 
@@ -54,25 +97,25 @@ It lets you:
 - Remove common macOS metadata files.
 - Save archives in supported writable formats.
 
-ArchiveSphynx is designed for everyday archive management with a clean table interface and familiar toolbar actions.
+ArchiveSphinx is designed for everyday archive management with a clean table interface and familiar toolbar actions.
 
 ---
 
 ## Supported Platforms
 
-ArchiveSphynx supports:
+ArchiveSphinx supports:
 
+- Linux (Debian and RPM Packages)
 - macOS
 - Windows
-- Linux
 
-Build targets include x64 and ARM64 where supported.
+Build targets include x64 and ARM64.
 
 ---
 
 ## Supported Archive Formats
 
-ArchiveSphynx can open and browse many common archive formats.
+ArchiveSphinx can open and browse many common archive formats.
 
 ### Open / Browse Formats
 
@@ -175,7 +218,7 @@ The status bar shows basic archive totals, including the number of files and com
 
 1. Click **New** or choose **File → New Archive**.
 2. Choose a file name and archive type.
-3. Click **Add** to add files or folders.
+3. Click **Add** or choose **File → Add files…** to add files or folders.  Optionally you can drag and drop files/folders onto the archive window.
 4. Click **Save** when finished.
 
 ---
@@ -187,7 +230,7 @@ To create a new archive:
 1. Click **New** or choose **File → New Archive**.
 2. Choose the destination filename.
 3. Choose a supported save format from the save dialog.
-4. ArchiveSphynx creates an empty archive.
+4. ArchiveSphinx creates an empty archive.
 
 If an archive is already open in the current window, the new archive opens in a new window.
 
@@ -211,9 +254,9 @@ To open an archive:
 
 1. Click **Open** or choose **File → Open Archive…**.
 2. Select an archive file.
-3. ArchiveSphynx loads the archive and displays its contents.
+3. ArchiveSphinx loads the archive and displays its contents.
 
-If the archive is already open in another ArchiveSphynx window, that existing window is focused instead of opening the same file twice.
+If the archive is already open in another ArchiveSphinx window, that existing window is focused instead of opening the same file twice.
 
 If an archive is already open in the current window, the selected archive opens in a new window.
 
@@ -266,7 +309,7 @@ Column order and widths are saved in settings.
 
 ## Selecting Entries
 
-ArchiveSphynx supports single selection and multi-selection.
+ArchiveSphinx supports single selection and multi-selection.
 
 ### Select One Entry
 
@@ -307,7 +350,7 @@ If a folder is selected, new files are added inside that folder. If a file is se
 
 ### File Size Note
 
-ArchiveSphynx skips individual files larger than 2 GB when adding them through file import, because they exceed the in-memory buffer limit used for those add operations. Skipped files are reported after the operation.
+ArchiveSphinx skips individual files larger than 2 GB when adding them through file import, because they exceed the in-memory buffer limit used for those add operations. Skipped files are reported after the operation.
 
 For very large archive workflows, TAR-based formats are generally recommended.
 
@@ -322,7 +365,7 @@ To create a folder inside a writable archive:
 3. A folder named `Untitled Folder` is created.
 4. Rename it immediately if desired.
 
-If a folder with the same name already exists, ArchiveSphynx automatically chooses a unique name such as `Untitled Folder 1`.
+If a folder with the same name already exists, ArchiveSphinx automatically chooses a unique name such as `Untitled Folder 1`.
 
 The **New Folder** command is available only when the current selection is empty or consists of folders.
 
@@ -354,13 +397,13 @@ Writable archives support drag-and-drop movement of entries within the archive.
 2. Drag the selection onto a destination folder.
 3. Drop the entries.
 
-If you drop on a file, ArchiveSphynx uses that file's parent folder as the destination.
+If you drop on a file, ArchiveSphinx uses that file's parent folder as the destination.
 
-ArchiveSphynx prevents invalid moves, such as moving a folder into itself.
+ArchiveSphinx prevents invalid moves, such as moving a folder into itself.
 
 ### macOS Metadata Movement
 
-When moving entries, ArchiveSphynx also attempts to move matching `__MACOSX` metadata entries where appropriate.
+When moving entries, ArchiveSphinx also attempts to move matching `__MACOSX` metadata entries where appropriate.
 
 ---
 
@@ -373,7 +416,7 @@ To delete entries from a writable archive:
 
 Deleting a folder deletes the folder and its contents from the archive.
 
-After deletion, ArchiveSphynx prunes empty folder entries where possible.
+After deletion, ArchiveSphinx prunes empty folder entries where possible.
 
 Deleting entries marks the archive as modified. Click **Save** to write the changes.
 
@@ -381,7 +424,7 @@ Deleting entries marks the archive as modified. Click **Save** to write the chan
 
 ## Extracting Files
 
-ArchiveSphynx can extract the entire archive or only selected entries.
+ArchiveSphinx can extract the entire archive or only selected entries.
 
 ### Extract All
 
@@ -389,7 +432,7 @@ If no entries are selected, the extract button shows **Extract All**.
 
 1. Click **Extract All** or choose **File → Extract…**.
 2. Choose a destination folder.
-3. ArchiveSphynx extracts the archive contents.
+3. ArchiveSphinx extracts the archive contents.
 
 ### Extract Selected
 
@@ -399,7 +442,7 @@ If one or more entries are selected, the extract button shows **Extract Selected
 2. Click **Extract Selected**.
 3. Choose a destination folder.
 
-If a selected entry is a folder, ArchiveSphynx extracts that folder's contents.
+If a selected entry is a folder, ArchiveSphinx extracts that folder's contents.
 
 ---
 
@@ -413,9 +456,9 @@ To save changes:
 - Choose **File → Save Archive**.
 - Press **Cmd/Ctrl+S**.
 
-During save operations, ArchiveSphynx displays progress information and disables conflicting actions.
+During save operations, ArchiveSphinx displays progress information and disables conflicting actions.
 
-If you close a window with unsaved changes, ArchiveSphynx asks whether to save, discard, or cancel closing.
+If you close a window with unsaved changes, ArchiveSphinx asks whether to save, discard, or cancel closing.
 
 ---
 
@@ -434,9 +477,9 @@ To use Save As:
 1. Open an archive.
 2. Choose **Save As…** or press **Cmd/Ctrl+Shift+S**.
 3. Choose the output file and format.
-4. ArchiveSphynx writes the new archive.
+4. ArchiveSphinx writes the new archive.
 
-When converting formats, ArchiveSphynx may need to extract and recompress entries internally. Large archives can take time.
+When converting formats, ArchiveSphinx may need to extract and recompress entries internally. Large archives can take time.
 
 ---
 
@@ -450,9 +493,9 @@ To test an archive:
 2. Click **Test** or choose **File → Test Integrity**.
 3. Review the result message.
 
-If no problems are found, ArchiveSphynx reports that all files are OK.
+If no problems are found, ArchiveSphinx reports that all files are OK.
 
-If problems are found, ArchiveSphynx reports the entries that failed.
+If problems are found, ArchiveSphinx reports the entries that failed.
 
 ---
 
@@ -468,7 +511,7 @@ To remove these entries:
 
 1. Open a writable archive.
 2. Click **Clean macOS** or choose **File → Clean macOS**.
-3. ArchiveSphynx removes matching entries.
+3. ArchiveSphinx removes matching entries.
 4. Save the archive.
 
 The Clean macOS command is disabled for read-only archive formats.
@@ -482,7 +525,7 @@ Open **Settings…** from the application menu.
 Settings are saved locally in:
 
 ```text
-~/.archivesphynx-settings.json
+~/.archivesphinx-settings.json
 ```
 
 Settings include:
@@ -495,7 +538,7 @@ Settings include:
 - zstd executable path
 - 7-Zip executable path
 
-ArchiveSphynx also saves:
+ArchiveSphinx also saves:
 
 - Window bounds
 - Column order
@@ -505,7 +548,7 @@ ArchiveSphynx also saves:
 
 ## Helper Compression Tools
 
-ArchiveSphynx can use external compression tools for some archive operations.
+ArchiveSphinx can use external compression tools for some archive operations.
 
 ### gzip / pigz
 
@@ -523,7 +566,7 @@ Used for bzip2-compressed TAR files, such as:
 - `.tar.bz2`
 - `.tbz2`
 
-If the bzip2 command-line tool is not available, ArchiveSphynx may use a slower JavaScript fallback and show a performance warning.
+If the bzip2 command-line tool is not available, ArchiveSphinx may use a slower JavaScript fallback and show a performance warning.
 
 ### xz
 
@@ -553,7 +596,7 @@ Common executable names include `7z` and `7zz`.
 
 ### Configuring Tool Paths
 
-In Settings, leave a tool path blank to let ArchiveSphynx auto-detect it, or use **Browse…** to select the executable manually.
+In Settings, leave a tool path blank to let ArchiveSphinx auto-detect it, or use **Browse…** to select the executable manually.
 
 ---
 
@@ -567,7 +610,7 @@ Some formats are intentionally opened as read-only:
 - DMG
 - ISO
 
-For read-only formats, ArchiveSphynx disables actions that would modify the archive, including:
+For read-only formats, ArchiveSphinx disables actions that would modify the archive, including:
 
 - Add
 - New Folder
@@ -589,7 +632,7 @@ You can still:
 
 ## License Key and Donation Prompt
 
-ArchiveSphynx includes a license key window and donation reminder.
+ArchiveSphinx includes a license key window and donation reminder.
 
 Open **License Key…** from the application menu to enter:
 
@@ -598,7 +641,7 @@ Open **License Key…** from the application menu to enter:
 
 License information is saved locally in the settings file.
 
-If no valid license is configured, ArchiveSphynx may occasionally show a donation reminder splash screen. The splash can be closed by clicking it or waiting for it to close automatically.
+If no valid license is configured, ArchiveSphinx may occasionally show a donation reminder splash screen. The splash can be closed by clicking it or waiting for it to close automatically.
 
 ---
 
@@ -622,7 +665,7 @@ The Save button is enabled only when:
 - The archive has unsaved changes.
 - No save operation is currently running.
 
-### ArchiveSphynx cannot open an archive
+### ArchiveSphinx cannot open an archive
 
 Possible causes:
 
@@ -635,7 +678,7 @@ For very large archives, TAR-based formats are recommended.
 
 ### Bzip2 performance warning appears
 
-ArchiveSphynx could not find the bzip2 command-line tool and used a slower fallback. Install bzip2 or configure its path in Settings.
+ArchiveSphinx could not find the bzip2 command-line tool and used a slower fallback. Install bzip2 or configure its path in Settings.
 
 ### zstd archives are not available
 
@@ -656,11 +699,11 @@ Check that:
 
 ### Files were skipped while adding
 
-ArchiveSphynx skips files that exceed the add-operation size limit or files that cannot be read. The skipped files are shown in a warning message.
+ArchiveSphinx skips files that exceed the add-operation size limit or files that cannot be read. The skipped files are shown in a warning message.
 
 ### A window will not close
 
-If ArchiveSphynx is saving, closing is temporarily blocked to prevent corruption. Wait for the save operation to complete.
+If ArchiveSphinx is saving, closing is temporarily blocked to prevent corruption. Wait for the save operation to complete.
 
 If there are unsaved changes, choose **Save**, **Don't Save**, or **Cancel** when prompted.
 
@@ -668,12 +711,12 @@ If there are unsaved changes, choose **Save**, **Don't Save**, or **Cancel** whe
 
 ## Privacy and Data Notes
 
-ArchiveSphynx runs locally on your computer.
+ArchiveSphinx runs locally on your computer.
 
 It stores settings in:
 
 ```text
-~/.archivesphynx-settings.json
+~/.archivesphinx-settings.json
 ```
 
 This file may include:
@@ -684,7 +727,7 @@ This file may include:
 - Helper executable paths
 - License key information
 
-ArchiveSphynx does not need to upload your archives to a server to manage them.
+ArchiveSphinx does not need to upload your archives to a server to manage them.
 
 External helper tools such as gzip, bzip2, xz, zstd, and 7-Zip run locally on your machine.
 
