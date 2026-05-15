@@ -1,4 +1,4 @@
-# ArchiveSphynx v1.1.0
+# ArchiveSphynx v1.2.0
 
 A cross-platform archive management tool.
 
