@@ -109,6 +109,7 @@ struct archive *writer_new(int format, int filter) {
     case 0: archive_write_set_format_zip(a); break;
     case 1: archive_write_set_format_pax_restricted(a); break;  // TAR
     case 2: archive_write_set_format_7zip(a); break;
+    case 3: archive_write_set_format_raw(a); break;             // RAW (filter only)
     default: archive_write_set_format_zip(a); break;
   }
   switch (filter) {

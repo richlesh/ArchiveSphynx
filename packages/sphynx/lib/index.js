@@ -2,7 +2,7 @@ const path = require("path");
 
 let wasmModule = null;
 
-const FORMAT = { ZIP: 0, TAR: 1, SEVENZIP: 2 };
+const FORMAT = { ZIP: 0, TAR: 1, SEVENZIP: 2, RAW: 3 };
 const FILTER = { NONE: 0, GZIP: 1, BZIP2: 2, XZ: 3, ZSTD: 4 };
 
 async function init() {
@@ -41,8 +41,8 @@ class ArchiveReader {
     return {
       pathname: this._mod.UTF8ToString(this._mod._entry_pathname()),
       isDirectory: !!this._mod._entry_is_dir(),
-      size: this._mod._entry_size(),
-      mtime: this._mod._entry_mtime(),
+      size: Number(this._mod._entry_size()),
+      mtime: Number(this._mod._entry_mtime()),
       perm: this._mod._entry_perm(),
       isSymlink: !!this._mod._entry_is_symlink(),
       symlink: this._mod.UTF8ToString(this._mod._entry_symlink()),
@@ -105,8 +105,8 @@ class ArchiveWriter {
     const mtime = options.mtime || Math.floor(Date.now() / 1000);
     const perm = options.perm || 0o644;
     const r = this._mod.ccall("writer_add_entry", "number",
-      ["number", "string", "number", "number", "number", "number"],
-      [this._ptr, pathname, 0, data.length, mtime, perm]);
+      ["number", "string", "number", "bigint", "bigint", "number"],
+      [this._ptr, pathname, 0, BigInt(data.length), BigInt(mtime), perm]);
     if (r !== 0) throw new Error("Failed to add entry header");
     const buf = this._mod._malloc(data.length);
     this._mod.HEAPU8.set(data, buf);
@@ -118,8 +118,8 @@ class ArchiveWriter {
     const mtime = options.mtime || Math.floor(Date.now() / 1000);
     const perm = options.perm || 0o755;
     this._mod.ccall("writer_add_entry", "number",
-      ["number", "string", "number", "number", "number", "number"],
-      [this._ptr, pathname, 1, 0, mtime, perm]);
+      ["number", "string", "number", "bigint", "bigint", "number"],
+      [this._ptr, pathname, 1, BigInt(0), BigInt(mtime), perm]);
   }
 
   finish() {
@@ -171,8 +171,8 @@ class StreamingReader {
     return {
       pathname: this._mod.UTF8ToString(this._mod._entry_pathname()),
       isDirectory: !!this._mod._entry_is_dir(),
-      size: this._mod._entry_size(),
-      mtime: this._mod._entry_mtime(),
+      size: Number(this._mod._entry_size()),
+      mtime: Number(this._mod._entry_mtime()),
       perm: this._mod._entry_perm(),
       isSymlink: !!this._mod._entry_is_symlink(),
       symlink: this._mod.UTF8ToString(this._mod._entry_symlink()),
@@ -187,6 +187,15 @@ class StreamingReader {
     const result = Buffer.from(this._mod.HEAPU8.slice(buf, buf + n));
     this._mod._free(buf);
     return result;
+  }
+
+  readAll() {
+    const chunks = [];
+    let chunk;
+    while ((chunk = this.readData(262144)) !== null) {
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
   }
 
   extractTo(outPath) {
@@ -252,8 +261,8 @@ class StreamingWriter {
     const mtime = options.mtime || Math.floor(Date.now() / 1000);
     const perm = options.perm || 0o644;
     this._mod.ccall("writer_add_entry", "number",
-      ["number", "string", "number", "number", "number", "number"],
-      [this._ptr, pathname, 0, data.length, mtime, perm]);
+      ["number", "string", "number", "bigint", "bigint", "number"],
+      [this._ptr, pathname, 0, BigInt(data.length), BigInt(mtime), perm]);
     const buf = this._mod._malloc(data.length);
     this._mod.HEAPU8.set(data, buf);
     this._mod._writer_write_data(this._ptr, buf, data.length);
@@ -266,8 +275,8 @@ class StreamingWriter {
     const mtime = options.mtime || Math.floor(stat.mtimeMs / 1000);
     const perm = options.perm || (stat.mode & 0o777);
     this._mod.ccall("writer_add_entry", "number",
-      ["number", "string", "number", "number", "number", "number"],
-      [this._ptr, pathname, 0, stat.size, mtime, perm]);
+      ["number", "string", "number", "bigint", "bigint", "number"],
+      [this._ptr, pathname, 0, BigInt(stat.size), BigInt(mtime), perm]);
     const chunkSize = 262144;
     const fd = fs.openSync(filePath, "r");
     const jsBuf = Buffer.alloc(chunkSize);
@@ -285,8 +294,8 @@ class StreamingWriter {
     const mtime = options.mtime || Math.floor(Date.now() / 1000);
     const perm = options.perm || 0o755;
     this._mod.ccall("writer_add_entry", "number",
-      ["number", "string", "number", "number", "number", "number"],
-      [this._ptr, pathname, 1, 0, mtime, perm]);
+      ["number", "string", "number", "bigint", "bigint", "number"],
+      [this._ptr, pathname, 1, BigInt(0), BigInt(mtime), perm]);
   }
 
   finish() {
@@ -298,4 +307,4 @@ class StreamingWriter {
   }
 }
 
-module.exports = { init, ArchiveReader, ArchiveWriter, StreamingReader, StreamingWriter, FORMAT, FILTER };
+module.exports = { init, _getModuleSync: () => wasmModule, ArchiveReader, ArchiveWriter, StreamingReader, StreamingWriter, FORMAT, FILTER };
