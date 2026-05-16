@@ -125,9 +125,9 @@ ArchiveSphinx can open and browse many common archive formats.
 - JAR: `.jar`
 - TAR: `.tar`
 - gzip-compressed TAR: `.tar.gz`, `.tgz`
-- bzip2-compressed TAR: `.tar.bz2`, `.tbz2`
+- bzip2-compressed TAR: `.tar.bz2`, `.tbz`
 - xz-compressed TAR: `.tar.xz`, `.txz`
-- zstd-compressed TAR: `.tar.zst`, `.tzst`
+- zstd-compressed TAR: `.tar.zstd`, `.tzst`
 - 7z-compressed TAR: `.tar.7z`, `.t7z`
 - Debian packages: `.deb`
 - RPM packages: `.rpm`
@@ -242,7 +242,7 @@ Available save formats include:
 - 7z
 - JAR
 - TAR
-- compressed TAR formats such as `.tgz`, `.tbz2`, `.txz`, `.tzst`, and `.t7z`
+- compressed TAR formats such as `.tgz`, `.tbz`, `.txz`, `.tzst`, and `.t7z`
 
 Some formats depend on helper tools being available. For example, zstd and 7z support may require configured helper executables.
 
@@ -564,7 +564,7 @@ If `pigz` is available, it may be used as a faster gzip-compatible tool.
 Used for bzip2-compressed TAR files, such as:
 
 - `.tar.bz2`
-- `.tbz2`
+- `.tbz`
 
 If the bzip2 command-line tool is not available, ArchiveSphinx may use a slower JavaScript fallback and show a performance warning.
 
@@ -579,7 +579,7 @@ Used for xz-compressed TAR files, such as:
 
 Used for zstd-compressed TAR files, such as:
 
-- `.tar.zst`
+- `.tar.zstd`
 - `.tzst`
 
 If zstd is not available, zstd save/open options may be limited.

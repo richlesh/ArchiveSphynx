@@ -127,6 +127,7 @@ emcc -O2 \
   -s MODULARIZE=1 \
   -s EXPORT_NAME="createSphynx" \
   -s ENVIRONMENT='node' \
+  -s NODERAWFS=1 \
   -s TOTAL_MEMORY=16MB \
   -o lib/sphynx.js
 

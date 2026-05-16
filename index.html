@@ -43,7 +43,7 @@
     const { ipcRenderer, webUtils } = require("electron");
     const path = require("path");
     const fs = require("fs");
-    const { createArchive, detectFormat, setZstdPath, setBzip2Path, setGzipPath, setXzPath, setSevenZipPath, isZstdAvailable, isZstdCliAvailable, wasBzip2FallbackUsed } = require("./archive");
+    const { createArchive, detectFormat, setZstdPath, setBzip2Path, setGzipPath, setXzPath, setSevenZipPath, isZstdAvailable, wasBzip2FallbackUsed } = require("./archive");
 
     function getSaveFilters() {
       const filters = [
@@ -52,18 +52,16 @@
         { name: "JAR Archive", extensions: ["jar"] },
         { name: "TAR Archive", extensions: ["tar"] },
         { name: "Compressed TAR (gzip)", extensions: ["tgz"] },
-        { name: "Compressed TAR (bzip2)", extensions: ["tbz2"] },
+        { name: "Compressed TAR (bzip2)", extensions: ["tbz"] },
         { name: "Compressed TAR (xz)", extensions: ["txz"] },
+        { name: "Compressed TAR (zstd)", extensions: ["tzs"] },
       ];
-      if (isZstdCliAvailable()) filters.push({ name: "Compressed TAR (zstd)", extensions: ["tzst"] });
-      filters.push({ name: "Compressed TAR (7z)", extensions: ["t7z"] });
       return filters;
     }
 
     function getOpenFilters() {
-      const exts = ["zip", "7z", "rar", "jar", "deb", "rpm", "dmg", "iso", "tar", "tar.gz", "tgz", "tar.bz2", "tbz2", "tar.xz", "txz", "tar.7z", "t7z"];
-      const tarExts = ["tar", "tar.gz", "tgz", "tar.bz2", "tbz2", "tar.xz", "txz", "tar.7z", "t7z"];
-      if (isZstdAvailable()) { exts.push("tar.zst", "tzst"); tarExts.push("tar.zst", "tzst"); }
+      const exts = ["zip", "7z", "rar", "jar", "deb", "rpm", "dmg", "iso", "tar", "tar.gz", "tgz", "tar.bz2", "tbz", "tar.xz", "txz", "tar.zstd", "tar.zst", "tzst", "tzs"];
+      const tarExts = ["tar", "tar.gz", "tgz", "tar.bz2", "tbz", "tar.xz", "txz", "tar.zstd", "tar.zst", "tzst", "tzs"];
       return [
         { name: "All Archives", extensions: exts },
         { name: "ZIP Archives", extensions: ["zip"] },
@@ -99,7 +97,15 @@
 
     function collapseAll() {
       collapsedPaths.clear();
-      archive.getEntries().filter((e) => e.isDirectory).forEach((e) => collapsedPaths.add(e.entryName));
+      const entries = archive.getEntries();
+      entries.filter((e) => e.isDirectory).forEach((e) => collapsedPaths.add(e.entryName));
+      // Also collapse implicit parent directories
+      entries.forEach((e) => {
+        const parts = e.entryName.replace(/\/$/, "").split("/");
+        for (let i = 1; i < parts.length; i++) {
+          collapsedPaths.add(parts.slice(0, i).join("/") + "/");
+        }
+      });
     }
 
     function isReadOnly() {

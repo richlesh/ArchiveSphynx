@@ -76,7 +76,7 @@
         "role": "Editor"
       },
       {
-        "ext": "tbz2",
+        "ext": "tbz",
         "name": "Bzip2 TAR Archive",
         "icon": "doc_icon_tar",
         "mimeType": "application/x-bzip2",
@@ -97,6 +97,13 @@
         "role": "Editor"
       },
       {
+        "ext": "tar.zstd",
+        "name": "Zstandard TAR Archive",
+        "icon": "doc_icon_tar",
+        "mimeType": "application/zstd",
+        "role": "Editor"
+      },
+      {
         "ext": "tar.zst",
         "name": "Zstandard TAR Archive",
         "icon": "doc_icon_tar",
@@ -111,10 +118,10 @@
         "role": "Editor"
       },
       {
-        "ext": "t7z",
-        "name": "7-Zip TAR Archive",
+        "ext": "tzs",
+        "name": "Zstandard TAR Archive",
         "icon": "doc_icon_tar",
-        "mimeType": "application/x-7z-compressed",
+        "mimeType": "application/zstd",
         "role": "Editor"
       }
     ],

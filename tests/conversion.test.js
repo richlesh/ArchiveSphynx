@@ -16,10 +16,9 @@ const readableFormats = [
   { ext: "zip", file: "test.zip" },
   { ext: "tar", file: "test.tar" },
   { ext: "tgz", file: "test.tgz" },
-  { ext: "tbz2", file: "test.tbz2" },
+  { ext: "tbz", file: "test.tbz" },
   { ext: "txz", file: "test.txz" },
   { ext: "tzst", file: "test.tzst" },
-  { ext: "t7z", file: "test.t7z" },
   { ext: "7z", file: "test.7z" },
   // RAR omitted — cannot create test file without proprietary tool
 ];
@@ -29,10 +28,9 @@ const writableFormats = [
   { ext: "zip", name: "ZIP" },
   { ext: "tar", name: "TAR" },
   { ext: "tgz", name: "TGZ" },
-  { ext: "tbz2", name: "TBZ2" },
+  { ext: "tbz", name: "TBZ" },
   { ext: "txz", name: "TXZ" },
   { ext: "tzst", name: "TZST" },
-  { ext: "t7z", name: "T7Z" },
   { ext: "7z", name: "7Z" },
 ];
 

@@ -20,6 +20,58 @@ int reader_open_memory(struct archive *a, const void *buf, size_t size) {
 }
 
 EMSCRIPTEN_KEEPALIVE
+int reader_open_filename(struct archive *a, const char *filename) {
+  return archive_read_open_filename(a, filename, 262144);
+}
+
+// ─── Seekable Reader via JS callbacks ───
+typedef int (*js_seekable_read_fn)(void *buf, int size);
+typedef int (*js_seekable_seek_fn)(int offset_lo, int offset_hi, int whence);
+
+static js_seekable_read_fn seekable_read_cb = NULL;
+static js_seekable_seek_fn seekable_seek_cb = NULL;
+static void *seekable_read_buf = NULL;
+static size_t seekable_read_buf_size = 0;
+
+static la_ssize_t seekable_read_callback(struct archive *a, void *data, const void **out_buf) {
+  if (!seekable_read_cb) return -1;
+  if (!seekable_read_buf) {
+    seekable_read_buf_size = 262144;
+    seekable_read_buf = malloc(seekable_read_buf_size);
+  }
+  int n = seekable_read_cb(seekable_read_buf, (int)seekable_read_buf_size);
+  if (n < 0) return ARCHIVE_FATAL;
+  *out_buf = seekable_read_buf;
+  return (la_ssize_t)n;
+}
+
+static la_int64_t seekable_seek_callback(struct archive *a, void *data, la_int64_t offset, int whence) {
+  if (!seekable_seek_cb) return ARCHIVE_FATAL;
+  int lo = (int)(offset & 0xFFFFFFFF);
+  int hi = (int)((offset >> 32) & 0xFFFFFFFF);
+  int result = seekable_seek_cb(lo, hi, whence);
+  return (la_int64_t)result;
+}
+
+static int seekable_close_callback(struct archive *a, void *data) {
+  if (seekable_read_buf) { free(seekable_read_buf); seekable_read_buf = NULL; }
+  seekable_read_cb = NULL;
+  seekable_seek_cb = NULL;
+  return ARCHIVE_OK;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int reader_open_seekable(struct archive *a, js_seekable_read_fn read_fn, js_seekable_seek_fn seek_fn) {
+  seekable_read_cb = read_fn;
+  seekable_seek_cb = seek_fn;
+  archive_read_set_read_callback(a, seekable_read_callback);
+  archive_read_set_seek_callback(a, seekable_seek_callback);
+  archive_read_set_close_callback(a, seekable_close_callback);
+  archive_read_set_callback_data(a, NULL);
+  return archive_read_open1(a);
+}
+
+EMSCRIPTEN_KEEPALIVE
 int reader_next_header(struct archive *a) {
   struct archive_entry *entry;
   int r = archive_read_next_header(a, &entry);
@@ -194,6 +246,89 @@ void writer_free_buffer(void) {
   if (write_buf) { free(write_buf); write_buf = NULL; }
   write_buf_size = 0;
   write_buf_used = 0;
+}
+
+// ─── Raw zstd compression (bypasses libarchive's broken zstd write filter) ───
+
+#include <zstd.h>
+
+EMSCRIPTEN_KEEPALIVE
+size_t zstd_compress_bound(size_t srcSize) {
+  return ZSTD_compressBound(srcSize);
+}
+
+EMSCRIPTEN_KEEPALIVE
+int zstd_compress(void *dst, size_t dstCap, const void *src, size_t srcSize, int level) {
+  size_t r = ZSTD_compress(dst, dstCap, src, srcSize, level);
+  if (ZSTD_isError(r)) return -1;
+  return (int)r;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int zstd_decompress(void *dst, size_t dstCap, const void *src, size_t srcSize) {
+  size_t r = ZSTD_decompress(dst, dstCap, src, srcSize);
+  if (ZSTD_isError(r)) return -1;
+  return (int)r;
+}
+
+EMSCRIPTEN_KEEPALIVE
+size_t zstd_decompress_bound(const void *src, size_t srcSize) {
+  unsigned long long r = ZSTD_getFrameContentSize(src, srcSize);
+  if (r == ZSTD_CONTENTSIZE_UNKNOWN || r == ZSTD_CONTENTSIZE_ERROR) return 0;
+  return (size_t)r;
+}
+
+// ─── ZSTD Streaming Compression ───
+
+static ZSTD_CCtx *zstd_cctx = NULL;
+static void *zstd_out_buf = NULL;
+static size_t zstd_out_cap = 0;
+
+EMSCRIPTEN_KEEPALIVE
+int zstd_stream_begin(int level, size_t inChunkSize) {
+  if (zstd_cctx) ZSTD_freeCCtx(zstd_cctx);
+  zstd_cctx = ZSTD_createCCtx();
+  if (!zstd_cctx) return -1;
+  ZSTD_CCtx_setParameter(zstd_cctx, ZSTD_c_compressionLevel, level);
+  zstd_out_cap = ZSTD_compressBound(inChunkSize);
+  zstd_out_buf = malloc(zstd_out_cap);
+  return 0;
+}
+
+// Compress a chunk. Output buffer is pre-sized to fit worst case.
+EMSCRIPTEN_KEEPALIVE
+int zstd_stream_compress(const void *src, size_t srcSize) {
+  if (!zstd_cctx) return -1;
+  ZSTD_inBuffer in = { src, srcSize, 0 };
+  ZSTD_outBuffer out = { zstd_out_buf, zstd_out_cap, 0 };
+  size_t r = ZSTD_compressStream2(zstd_cctx, &out, &in, ZSTD_e_continue);
+  if (ZSTD_isError(r)) return -1;
+  return (int)out.pos;
+}
+
+// Flush/end the stream. Returns compressed output bytes, 0 when fully done, -1 on error.
+EMSCRIPTEN_KEEPALIVE
+int zstd_stream_end(void) {
+  if (!zstd_cctx) return -1;
+  ZSTD_inBuffer in = { NULL, 0, 0 };
+  ZSTD_outBuffer out = { zstd_out_buf, zstd_out_cap, 0 };
+  size_t remaining = ZSTD_compressStream2(zstd_cctx, &out, &in, ZSTD_e_end);
+  if (ZSTD_isError(remaining)) return -1;
+  // Return output bytes produced; caller should call again if remaining > 0
+  // We use out.pos as return; if out.pos == 0 and remaining == 0, frame is done
+  return (int)out.pos;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void *zstd_stream_get_out(void) {
+  return zstd_out_buf;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void zstd_stream_free(void) {
+  if (zstd_cctx) { ZSTD_freeCCtx(zstd_cctx); zstd_cctx = NULL; }
+  if (zstd_out_buf) { free(zstd_out_buf); zstd_out_buf = NULL; }
+  zstd_out_cap = 0;
 }
 
 // ─── Streaming Reader API ───
