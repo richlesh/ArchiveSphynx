@@ -272,19 +272,14 @@ class ZipArchive {
     if (!entry || entry.isDirectory) return null;
     if (entry._data) return entry._data;
     if (!this._sourceFile) return null;
-    // Use sphynx in-memory reader (module already initialized from open())
     const { _getModuleSync } = require("sphynx");
     const mod = _getModuleSync();
     if (!mod) return this._getDataSync(entryName);
-    const fileBuf = fs.readFileSync(this._sourceFile);
     const ptr = mod._reader_new();
-    const wasmBuf = mod._malloc(fileBuf.length);
-    mod.HEAPU8.set(fileBuf, wasmBuf);
-    const r = mod._reader_open_memory(ptr, wasmBuf, fileBuf.length);
-    if (r !== 0) { mod._free(wasmBuf); mod._reader_close(ptr); return this._getDataSync(entryName); }
+    const r = mod.ccall("reader_open_filename", "number", ["number", "string"], [ptr, this._sourceFile]);
+    if (r !== 0) { mod._reader_close(ptr); return this._getDataSync(entryName); }
     let result = null;
-    let rc;
-    while ((rc = mod._reader_next(ptr)) === 0) {
+    while (mod._reader_next(ptr) === 0) {
       const name = mod.UTF8ToString(mod._entry_pathname());
       if (name === entryName) {
         const chunks = [];
@@ -298,7 +293,6 @@ class ZipArchive {
         break;
       }
     }
-    mod._free(wasmBuf);
     mod._reader_close(ptr);
     return result;
   }
