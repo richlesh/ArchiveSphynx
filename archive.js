@@ -4,6 +4,24 @@ const zlib = require("zlib");
 const { StreamingReader, StreamingWriter, ArchiveReader, ArchiveWriter, FORMAT, FILTER, zstdCompress, zstdCompressFile } = require("sphynx");
 const { execFileSync } = require("child_process");
 
+const isMac = process.platform === "darwin";
+
+// On macOS, remap __MACOSX/path/._file to path/._file so resource forks merge
+function remapExtractPath(entryName) {
+  if (!isMac) return entryName;
+  if (!entryName.startsWith("__MACOSX/")) return entryName;
+  return entryName.slice("__MACOSX/".length);
+}
+
+// On macOS, merge ._ files into resource forks via dot_clean
+function mergeResourceForks(dest) {
+  if (!isMac) return;
+  try {
+    const { spawnSync } = require("child_process");
+    spawnSync("dot_clean", [dest], { stdio: "ignore" });
+  } catch {}
+}
+
 // XZ/LZMA decompression via sphynx (libarchive WASM)
 async function xzDecompress(buf) {
   const reader = await ArchiveReader.open(buf);
@@ -305,19 +323,50 @@ class ZipArchive {
     const reader = await StreamingReader.openFile(this._sourceFile);
     let count = 0;
     const total = this.entries.length;
+    const dirs = [];
     for (const entry of reader) {
       count++;
       if (onProgress && count % 100 === 0) onProgress(count, total);
-      const outPath = path.join(dest, entry.pathname);
+      const mapped = remapExtractPath(entry.pathname);
+      if (!mapped) continue;
+      const outPath = path.join(dest, mapped);
       if (entry.isDirectory) {
         fs.mkdirSync(outPath, { recursive: true });
+        if (entry.mtime) dirs.push({ path: outPath, mtime: new Date(entry.mtime * 1000) });
       } else {
         fs.mkdirSync(path.dirname(outPath), { recursive: true });
         const data = reader.readAll();
         fs.writeFileSync(outPath, data);
+        if (entry.mtime) {
+          try { fs.utimesSync(outPath, new Date(entry.mtime * 1000), new Date(entry.mtime * 1000)); } catch {}
+        }
       }
     }
     reader.close();
+    mergeResourceForks(dest);
+    // Set directory timestamps (explicit dirs + inferred from file mtimes)
+    const dirTimes = new Map();
+    for (const d of dirs) {
+      dirTimes.set(d.path, d.mtime);
+    }
+    // Infer timestamps for implicit directories from their children
+    for (const e of this.entries) {
+      if (e.isDirectory || !e.time) continue;
+      const mapped = remapExtractPath(e.entryName);
+      if (!mapped) continue;
+      let parent = path.dirname(path.join(dest, mapped));
+      while (parent.length > dest.length) {
+        const existing = dirTimes.get(parent);
+        const t = e.time instanceof Date ? e.time : new Date(e.time * 1000);
+        if (!existing || t > existing) dirTimes.set(parent, t);
+        parent = path.dirname(parent);
+      }
+    }
+    // Apply deepest first so parent timestamps aren't overwritten
+    const sortedDirs = [...dirTimes.entries()].sort((a, b) => b[0].length - a[0].length);
+    for (const [p, t] of sortedDirs) {
+      try { fs.utimesSync(p, t, t); } catch {}
+    }
     if (onProgress) onProgress(total, total);
   }
 
@@ -654,8 +703,8 @@ class TarArchive {
 
   async _streamingZstdCompress(tarPath, outPath) {
     const stat = fs.statSync(tarPath);
-    if (stat.size > 1.5 * 1024 * 1024 * 1024) {
-      throw new Error("Zstd fallback not supported for files > 1.5 GiB. Install zstd CLI and configure its path in Settings.");
+    if (stat.size > 2 * 1024 * 1024 * 1024) {
+      throw new Error("Zstd fallback not supported for files > 2 GiB. Install zstd CLI and configure its path in Settings.");
     }
     const tarBuf = fs.readFileSync(tarPath);
     fs.writeFileSync(outPath, await zstdCompress(tarBuf));
@@ -820,13 +869,18 @@ class TarArchive {
   extractEntry(entryName, dest) {
     const entry = this.entries.find((e) => e.entryName === entryName);
     if (!entry) return;
-    const outPath = path.join(dest, entry.entryName);
+    const mapped = remapExtractPath(entry.entryName);
+    if (!mapped) return;
+    const outPath = path.join(dest, mapped);
     if (entry.isDirectory) {
       fs.mkdirSync(outPath, { recursive: true });
     } else {
       fs.mkdirSync(path.dirname(outPath), { recursive: true });
       const data = this._getEntryData(entry);
       if (data) fs.writeFileSync(outPath, data);
+    }
+    if (entry.time) {
+      try { fs.utimesSync(outPath, entry.time, entry.time); } catch {}
     }
   }
 
@@ -838,6 +892,28 @@ class TarArchive {
         onProgress(i + 1, total);
         await new Promise((r) => setTimeout(r, 0));
       }
+    }
+    mergeResourceForks(dest);
+    // Set directory timestamps (explicit + inferred from file mtimes)
+    const dirTimes = new Map();
+    for (const e of this.entries) {
+      const mapped = remapExtractPath(e.entryName);
+      if (!mapped || !e.time) continue;
+      const t = e.time instanceof Date ? e.time : new Date(e.time * 1000);
+      if (e.isDirectory) {
+        dirTimes.set(path.join(dest, mapped), t);
+      } else {
+        let parent = path.dirname(path.join(dest, mapped));
+        while (parent.length > dest.length) {
+          const existing = dirTimes.get(parent);
+          if (!existing || t > existing) dirTimes.set(parent, t);
+          parent = path.dirname(parent);
+        }
+      }
+    }
+    const sortedDirs = [...dirTimes.entries()].sort((a, b) => b[0].length - a[0].length);
+    for (const [p, t] of sortedDirs) {
+      try { fs.utimesSync(p, t, t); } catch {}
     }
     if (onProgress) onProgress(total, total);
   }
@@ -871,7 +947,7 @@ class SevenZipArchive {
     try {
       const { spawnSync } = require("child_process");
       const r = spawnSync(getSevenZipPath(), ["--help"], { stdio: "ignore" });
-      return r.status === 0 || r.status === 7; // 7z returns 7 for --help on some versions
+      return !r.error && (r.status === 0 || r.status === 7);
     } catch { return false; }
   }
 
@@ -941,7 +1017,9 @@ class SevenZipArchive {
   }
 
   async save(filePath, onProgress) {
+    let usedCli = false;
     if (this._is7zAvailable()) {
+      try {
       const os = require("os");
       const { spawn } = require("child_process");
       const tempDir = path.join(os.tmpdir(), "archivesphynx-7z-" + Date.now());
@@ -982,7 +1060,12 @@ class SevenZipArchive {
         proc.on("error", reject);
       });
       fs.rmSync(tempDir, { recursive: true, force: true });
-    } else {
+      usedCli = true;
+      } catch (e) {
+        if (!e.message.includes("ENOENT") && !e.message.includes("spawn")) throw e;
+      }
+    }
+    if (!usedCli) {
       // Sphynx fallback — 7z writer buffers all data internally, limit to 2GB
       const totalSize = this.entries.reduce((sum, e) => sum + (e.size || 0), 0);
       if (totalSize > 2 * 1024 * 1024 * 1024) {
@@ -1156,17 +1239,44 @@ class SevenZipArchive {
       });
     } else {
       const reader = await StreamingReader.openFileSeekable(this._filePath);
+      const dirs = [];
       for (const entry of reader) {
-        const outPath = path.join(dest, entry.pathname);
+        const mapped = remapExtractPath(entry.pathname);
+        if (!mapped) continue;
+        const outPath = path.join(dest, mapped);
         if (entry.isDirectory) {
           fs.mkdirSync(outPath, { recursive: true });
+          if (entry.mtime) dirs.push({ path: outPath, mtime: new Date(entry.mtime * 1000) });
         } else {
           fs.mkdirSync(path.dirname(outPath), { recursive: true });
           fs.writeFileSync(outPath, reader.readAll());
+          if (entry.mtime) {
+            try { fs.utimesSync(outPath, new Date(entry.mtime * 1000), new Date(entry.mtime * 1000)); } catch {}
+          }
         }
       }
       reader.close();
+      mergeResourceForks(dest);
+      // Infer directory timestamps from children
+      for (const e of this.entries) {
+        if (e.isDirectory || !e.time) continue;
+        const mapped = remapExtractPath(e.entryName);
+        if (!mapped) continue;
+        const t = e.time instanceof Date ? e.time : new Date(e.time * 1000);
+        let parent = path.dirname(path.join(dest, mapped));
+        while (parent.length > dest.length) {
+          const existing = dirs.find(d => d.path === parent);
+          if (existing) { if (t > existing.mtime) existing.mtime = t; }
+          else dirs.push({ path: parent, mtime: t });
+          parent = path.dirname(parent);
+        }
+      }
+      dirs.sort((a, b) => b.path.length - a.path.length);
+      for (const d of dirs) {
+        try { fs.utimesSync(d.path, d.mtime, d.mtime); } catch {}
+      }
     }
+    mergeResourceForks(dest);
   }
 
   async testIntegrity() {
