@@ -839,6 +839,14 @@ class SevenZipArchive {
     this._cacheDir = null;
   }
 
+  _is7zAvailable() {
+    try {
+      const { spawnSync } = require("child_process");
+      const r = spawnSync(getSevenZipPath(), ["--help"], { stdio: "ignore" });
+      return r.status === 0 || r.status === 7; // 7z returns 7 for --help on some versions
+    } catch { return false; }
+  }
+
   _clearCache() {
     if (this._cacheDir) {
       try { fs.rmSync(this._cacheDir, { recursive: true, force: true }); } catch {}
@@ -856,73 +864,107 @@ class SevenZipArchive {
     this._clearCache();
     this._filePath = filePath;
     this.entries = [];
-    const { spawnSync } = require("child_process");
-    const result = spawnSync(getSevenZipPath(), ["l", "-slt", filePath], { encoding: "utf8", maxBuffer: 100 * 1024 * 1024 });
-    if (result.status !== 0) throw new Error("Failed to list 7z archive: " + (result.stderr || "unknown error"));
-    const blocks = result.stdout.split(/\n\n/).filter((b) => b.includes("Path = ") && !b.includes("Type = ") && !b.includes("Physical Size"));
-    for (let i = 0; i < blocks.length; i++) {
-      const lines = blocks[i].split("\n");
-      const get = (key) => { const l = lines.find((ln) => ln.startsWith(key + " = ")); return l ? l.slice(key.length + 3) : ""; };
-      const entryPath = get("Path");
-      if (!entryPath) continue;
-      const isDir = get("Folder") === "+" || get("Attributes").startsWith("D");
-      const entryName = entryPath.replace(/\\/g, "/") + (isDir ? "/" : "");
-      const size = parseInt(get("Size"), 10) || 0;
-      const compressed = get("Packed Size") ? parseInt(get("Packed Size"), 10) : -1;
-      const mtime = get("Modified") ? new Date(get("Modified")) : null;
-      const method = get("Method") || "LZMA2";
-      this.entries.push({ entryName, isDirectory: isDir, size, compressedSize: compressed, time: mtime, method });
-      if (onProgress) onProgress(i, blocks.length - 1);
+    if (this._is7zAvailable()) {
+      const { spawnSync } = require("child_process");
+      const result = spawnSync(getSevenZipPath(), ["l", "-slt", filePath], { encoding: "utf8", maxBuffer: 100 * 1024 * 1024 });
+      if (result.status === 0) {
+        const blocks = result.stdout.split(/\n\n/).filter((b) => b.includes("Path = ") && !b.includes("Type = ") && !b.includes("Physical Size"));
+        for (let i = 0; i < blocks.length; i++) {
+          const lines = blocks[i].split("\n");
+          const get = (key) => { const l = lines.find((ln) => ln.startsWith(key + " = ")); return l ? l.slice(key.length + 3) : ""; };
+          const entryPath = get("Path");
+          if (!entryPath) continue;
+          const isDir = get("Folder") === "+" || get("Attributes").startsWith("D");
+          const entryName = entryPath.replace(/\\/g, "/") + (isDir ? "/" : "");
+          const size = parseInt(get("Size"), 10) || 0;
+          const compressed = get("Packed Size") ? parseInt(get("Packed Size"), 10) : -1;
+          const mtime = get("Modified") ? new Date(get("Modified")) : null;
+          const method = get("Method") || "LZMA2";
+          this.entries.push({ entryName, isDirectory: isDir, size, compressedSize: compressed, time: mtime, method });
+          if (onProgress) onProgress(i, blocks.length - 1);
+        }
+        return;
+      }
     }
+    // Sphynx fallback (7z requires seekable input, use in-memory reader)
+    const fileBuf = fs.readFileSync(filePath);
+    const reader = await ArchiveReader.open(fileBuf);
+    let count = 0;
+    for (const entry of reader) {
+      let size = entry.size;
+      if (!entry.isDirectory && size === 0) {
+        size = reader.readAll().length;
+      }
+      this.entries.push({
+        entryName: entry.pathname,
+        isDirectory: entry.isDirectory,
+        size,
+        compressedSize: 0,
+        time: entry.mtime ? new Date(entry.mtime * 1000) : null,
+        method: "LZMA2",
+      });
+      count++;
+      if (onProgress && count % 500 === 0) onProgress(count, 0);
+    }
+    reader.close();
+    if (onProgress) onProgress(count, count);
   }
 
   async save(filePath, onProgress) {
-    const os = require("os");
-    const { spawn } = require("child_process");
-    const tempDir = path.join(os.tmpdir(), "archivesphynx-7z-" + Date.now());
-    fs.mkdirSync(tempDir, { recursive: true });
-    // Extract current archive to temp if we have a source
-    if (this._filePath && fs.existsSync(this._filePath)) {
+    if (this._is7zAvailable()) {
+      const os = require("os");
+      const { spawn } = require("child_process");
+      const tempDir = path.join(os.tmpdir(), "archivesphynx-7z-" + Date.now());
+      fs.mkdirSync(tempDir, { recursive: true });
+      if (this._filePath && fs.existsSync(this._filePath)) {
+        await new Promise((resolve, reject) => {
+          const proc = spawn(getSevenZipPath(), ["x", "-o" + tempDir, "-y", this._filePath], { stdio: ["ignore", "pipe", "pipe"] });
+          proc.on("close", (code) => code === 0 ? resolve() : reject(new Error("7z extraction failed")));
+          proc.on("error", reject);
+        });
+      }
+      const total = this.entries.length;
+      for (let i = 0; i < total; i++) {
+        const e = this.entries[i];
+        const outPath = path.join(tempDir, ...e.entryName.replace(/\/$/, "").split("/"));
+        if (e.isDirectory) {
+          fs.mkdirSync(outPath, { recursive: true });
+        } else if (e._data) {
+          fs.mkdirSync(path.dirname(outPath), { recursive: true });
+          fs.writeFileSync(outPath, e._data);
+        }
+        if (onProgress && i % 100 === 0) onProgress(i, total);
+      }
+      if (this._deleted && this._deleted.length > 0) {
+        for (const name of this._deleted) {
+          const target = path.join(tempDir, ...name.replace(/\/$/, "").split("/"));
+          try {
+            const stat = fs.statSync(target);
+            if (stat.isDirectory()) fs.rmSync(target, { recursive: true });
+            else fs.unlinkSync(target);
+          } catch {}
+        }
+      }
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
       await new Promise((resolve, reject) => {
-        const proc = spawn(getSevenZipPath(), ["x", "-o" + tempDir, "-y", this._filePath], { stdio: ["ignore", "pipe", "pipe"] });
-        proc.on("close", (code) => code === 0 ? resolve() : reject(new Error("7z extraction failed")));
+        const proc = spawn(getSevenZipPath(), ["a", "-t7z", filePath, path.join(tempDir, "*")], { stdio: ["ignore", "pipe", "pipe"] });
+        proc.on("close", (code) => code === 0 ? resolve() : reject(new Error("Failed to create 7z archive")));
         proc.on("error", reject);
       });
-    }
-    // Apply pending additions (entries with _data)
-    const total = this.entries.length;
-    for (let i = 0; i < total; i++) {
-      const e = this.entries[i];
-      const outPath = path.join(tempDir, ...e.entryName.replace(/\/$/, "").split("/"));
-      if (e.isDirectory) {
-        fs.mkdirSync(outPath, { recursive: true });
-      } else if (e._data) {
-        fs.mkdirSync(path.dirname(outPath), { recursive: true });
-        fs.writeFileSync(outPath, e._data);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } else {
+      // Sphynx fallback
+      const writer = await StreamingWriter.createFile(filePath, "SEVENZIP", "NONE");
+      for (const e of this.entries) {
+        if (e.isDirectory) {
+          writer.addDirectory(e.entryName, { mtime: e.time ? Math.floor(e.time.getTime() / 1000) : undefined });
+        } else {
+          const data = e._data || this._getDataSphynx(e.entryName);
+          if (data) writer.addFile(e.entryName, data, { mtime: e.time ? Math.floor(e.time.getTime() / 1000) : undefined });
+        }
       }
-      if (onProgress && i % 100 === 0) onProgress(i, total);
+      writer.finish();
     }
-    // Remove entries marked for deletion
-    if (this._deleted && this._deleted.length > 0) {
-      for (const name of this._deleted) {
-        const target = path.join(tempDir, ...name.replace(/\/$/, "").split("/"));
-        try {
-          const stat = fs.statSync(target);
-          if (stat.isDirectory()) fs.rmSync(target, { recursive: true });
-          else fs.unlinkSync(target);
-        } catch {}
-      }
-    }
-    // Create new archive from temp dir
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    await new Promise((resolve, reject) => {
-      const proc = spawn(getSevenZipPath(), ["a", "-t7z", filePath, path.join(tempDir, "*")], { stdio: ["ignore", "pipe", "pipe"] });
-      proc.on("close", (code) => code === 0 ? resolve() : reject(new Error("Failed to create 7z archive")));
-      proc.on("error", reject);
-    });
-    // Clean up temp
-    fs.rmSync(tempDir, { recursive: true, force: true });
-    // Re-read entries
     this._filePath = filePath;
     this._deleted = [];
     this.entries = [];
@@ -982,10 +1024,76 @@ class SevenZipArchive {
     if (this._cacheDir) return;
     if (!this._filePath) return;
     const os = require("os");
-    const { spawnSync } = require("child_process");
     this._cacheDir = path.join(os.tmpdir(), "archivesphynx-7zcache-" + Date.now());
     fs.mkdirSync(this._cacheDir, { recursive: true });
-    spawnSync(getSevenZipPath(), ["x", "-o" + this._cacheDir, "-y", this._filePath], { stdio: ["ignore", "pipe", "pipe"] });
+    if (this._is7zAvailable()) {
+      const { spawnSync } = require("child_process");
+      spawnSync(getSevenZipPath(), ["x", "-o" + this._cacheDir, "-y", this._filePath], { stdio: ["ignore", "pipe", "pipe"] });
+    } else {
+      // Sphynx fallback: extract all via streaming reader
+      const { _getModuleSync } = require("sphynx");
+      const mod = _getModuleSync();
+      if (!mod) return;
+      const fileBuf = fs.readFileSync(this._filePath);
+      const ptr = mod._reader_new();
+      const wasmBuf = mod._malloc(fileBuf.length);
+      mod.HEAPU8.set(fileBuf, wasmBuf);
+      if (mod._reader_open_memory(ptr, wasmBuf, fileBuf.length) !== 0) {
+        mod._free(wasmBuf); mod._reader_close(ptr); return;
+      }
+      while (mod._reader_next(ptr) === 0) {
+        const name = mod.UTF8ToString(mod._entry_pathname());
+        const isDir = !!mod._entry_is_dir();
+        const outPath = path.join(this._cacheDir, ...name.split("/"));
+        if (isDir) {
+          fs.mkdirSync(outPath, { recursive: true });
+        } else {
+          fs.mkdirSync(path.dirname(outPath), { recursive: true });
+          const chunks = [];
+          const readBuf = mod._malloc(262144);
+          let n;
+          while ((n = mod._reader_read_data(ptr, readBuf, 262144)) > 0) {
+            chunks.push(Buffer.from(mod.HEAPU8.slice(readBuf, readBuf + n)));
+          }
+          mod._free(readBuf);
+          fs.writeFileSync(outPath, Buffer.concat(chunks));
+        }
+      }
+      mod._free(wasmBuf);
+      mod._reader_close(ptr);
+    }
+  }
+
+  _getDataSphynx(entryName) {
+    if (!this._filePath) return null;
+    const { _getModuleSync } = require("sphynx");
+    const mod = _getModuleSync();
+    if (!mod) return null;
+    const fileBuf = fs.readFileSync(this._filePath);
+    const ptr = mod._reader_new();
+    const wasmBuf = mod._malloc(fileBuf.length);
+    mod.HEAPU8.set(fileBuf, wasmBuf);
+    if (mod._reader_open_memory(ptr, wasmBuf, fileBuf.length) !== 0) {
+      mod._free(wasmBuf); mod._reader_close(ptr); return null;
+    }
+    let result = null;
+    while (mod._reader_next(ptr) === 0) {
+      const name = mod.UTF8ToString(mod._entry_pathname());
+      if (name === entryName) {
+        const chunks = [];
+        const readBuf = mod._malloc(262144);
+        let n;
+        while ((n = mod._reader_read_data(ptr, readBuf, 262144)) > 0) {
+          chunks.push(Buffer.from(mod.HEAPU8.slice(readBuf, readBuf + n)));
+        }
+        mod._free(readBuf);
+        result = Buffer.concat(chunks);
+        break;
+      }
+    }
+    mod._free(wasmBuf);
+    mod._reader_close(ptr);
+    return result;
   }
 
   getData(entryName) {
@@ -995,31 +1103,73 @@ class SevenZipArchive {
     if (!this._filePath) return null;
     this._ensureCache();
     const cached = path.join(this._cacheDir, ...entryName.split("/"));
-    try { return fs.readFileSync(cached); } catch { return null; }
+    try { return fs.readFileSync(cached); } catch { return this._getDataSphynx(entryName); }
   }
 
   extractEntry(entryName, dest) {
     if (!this._filePath) return;
-    const { spawnSync } = require("child_process");
-    spawnSync(getSevenZipPath(), ["x", "-o" + dest, "-y", this._filePath, entryName.replace(/\//g, path.sep)], { stdio: ["ignore", "pipe", "pipe"] });
+    if (this._is7zAvailable()) {
+      const { spawnSync } = require("child_process");
+      spawnSync(getSevenZipPath(), ["x", "-o" + dest, "-y", this._filePath, entryName.replace(/\//g, path.sep)], { stdio: ["ignore", "pipe", "pipe"] });
+    } else {
+      const data = this._getDataSphynx(entryName);
+      if (data) {
+        const outPath = path.join(dest, entryName);
+        fs.mkdirSync(path.dirname(outPath), { recursive: true });
+        fs.writeFileSync(outPath, data);
+      }
+    }
   }
 
   async extractAll(dest) {
     if (!this._filePath) return;
-    const { spawn } = require("child_process");
-    await new Promise((resolve) => {
-      const proc = spawn(getSevenZipPath(), ["x", "-o" + dest, "-y", this._filePath], { stdio: ["ignore", "pipe", "pipe"] });
-      proc.on("close", resolve);
-      proc.on("error", resolve);
-    });
+    if (this._is7zAvailable()) {
+      const { spawn } = require("child_process");
+      await new Promise((resolve) => {
+        const proc = spawn(getSevenZipPath(), ["x", "-o" + dest, "-y", this._filePath], { stdio: ["ignore", "pipe", "pipe"] });
+        proc.on("close", resolve);
+        proc.on("error", resolve);
+      });
+    } else {
+      const fileBuf = fs.readFileSync(this._filePath);
+      const reader = await ArchiveReader.open(fileBuf);
+      for (const entry of reader) {
+        const outPath = path.join(dest, entry.pathname);
+        if (entry.isDirectory) {
+          fs.mkdirSync(outPath, { recursive: true });
+        } else {
+          fs.mkdirSync(path.dirname(outPath), { recursive: true });
+          fs.writeFileSync(outPath, reader.readAll());
+        }
+      }
+      reader.close();
+    }
   }
 
-  testIntegrity() {
+  async testIntegrity() {
     if (!this._filePath) return [];
-    const { spawnSync } = require("child_process");
-    const result = spawnSync(getSevenZipPath(), ["t", this._filePath], { encoding: "utf8" });
-    if (result.status === 0) return [];
-    return ["Archive integrity test failed: " + (result.stderr || result.stdout || "unknown error")];
+    if (this._is7zAvailable()) {
+      const { spawnSync } = require("child_process");
+      const result = spawnSync(getSevenZipPath(), ["t", this._filePath], { encoding: "utf8" });
+      if (result.status === 0) return [];
+      return ["Archive integrity test failed: " + (result.stderr || result.stdout || "unknown error")];
+    }
+    // Sphynx fallback: try to read all entries
+    const errors = [];
+    try {
+      const fileBuf = fs.readFileSync(this._filePath);
+      const reader = await ArchiveReader.open(fileBuf);
+      for (const entry of reader) {
+        if (!entry.isDirectory) {
+          try { reader.readAll(); }
+          catch (e) { errors.push(entry.pathname + ": " + e.message); }
+        }
+      }
+      reader.close();
+    } catch (e) {
+      errors.push("Archive: " + e.message);
+    }
+    return errors;
   }
 }
 
