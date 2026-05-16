@@ -165,7 +165,7 @@
   "devDependencies": {
     "electron": "^41.3.0",
     "electron-builder": "^26.8.1",
-    "jest": "^29.7.0"
+    "jest": "^30.4.2"
   },
   "dependencies": {
     "sphynx": "file:packages/sphynx"
