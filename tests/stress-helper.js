@@ -10,10 +10,9 @@ const formats = [
   { ext: "zip", file: "stress_test.zip" },
   { ext: "tar", file: "stress_test.tar" },
   { ext: "tgz", file: "stress_test.tgz" },
-  { ext: "tbz2", file: "stress_test.tbz2" },
+  { ext: "tbz", file: "stress_test.tbz" },
   { ext: "txz", file: "stress_test.txz" },
   { ext: "tzst", file: "stress_test.tzst" },
-  { ext: "t7z", file: "stress_test.t7z" },
   { ext: "7z", file: "stress_test.7z" },
 ];
 

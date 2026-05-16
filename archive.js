@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const zlib = require("zlib");
-const { StreamingReader, StreamingWriter, ArchiveReader, ArchiveWriter, FORMAT, FILTER } = require("sphynx");
+const { StreamingReader, StreamingWriter, ArchiveReader, ArchiveWriter, FORMAT, FILTER, zstdCompress, zstdCompressFile } = require("sphynx");
 const { execFileSync } = require("child_process");
 
 // XZ/LZMA decompression via sphynx (libarchive WASM)
@@ -20,28 +20,58 @@ async function xzCompress(buf) {
 }
 
 // Generic decompression via sphynx (handles bzip2, zstd, xz, gzip)
-// Reads a compressed tar and returns the raw decompressed tar bytes
-async function sphynxDecompressToTar(compressedBuf) {
-  // libarchive will auto-detect the filter and format
-  // We iterate entries and reconstruct a raw tar
-  // Simpler: use the raw filter decompression by reading all entry data
-  const reader = await ArchiveReader.open(compressedBuf);
-  const entries = [];
-  let entry;
-  while ((entry = reader.next()) !== null) {
-    const data = entry.isDirectory ? null : reader.readAll();
-    entries.push({ ...entry, data });
-  }
-  reader.close();
-  // Re-pack as uncompressed tar
-  const writer = await ArchiveWriter.create(FORMAT.TAR, FILTER.NONE);
-  for (const e of entries) {
-    if (e.isDirectory) {
-      writer.addDirectory(e.pathname, { mtime: e.mtime, perm: e.perm });
+// Decompresses a compressed tar to a file, streaming entry-by-entry
+// If outPath is provided, writes directly to file and returns null
+// If outPath is not provided, returns a Buffer (for small archives only)
+async function sphynxDecompressToTar(compressedBuf, onProgress, outPath) {
+  if (outPath) {
+    // Stream file-to-file: no full-file memory load needed
+    const srcPath = typeof compressedBuf === "string" ? compressedBuf : null;
+    let reader;
+    if (srcPath) {
+      reader = await StreamingReader.openFile(srcPath);
     } else {
-      writer.addFile(e.pathname, e.data || Buffer.alloc(0), { mtime: e.mtime, perm: e.perm });
+      reader = await ArchiveReader.open(compressedBuf);
+    }
+    const writer = await StreamingWriter.createFile(outPath, "TAR", "NONE");
+    let entry;
+    let count = 0;
+    while ((entry = reader.next()) !== null) {
+      if (entry.isDirectory) {
+        writer.addDirectory(entry.pathname, { mtime: entry.mtime, perm: entry.perm });
+      } else {
+        const data = reader.readAll();
+        writer.addFile(entry.pathname, data, { mtime: entry.mtime, perm: entry.perm });
+      }
+      count++;
+      if (onProgress && count % 50 === 0) {
+        onProgress(count, 0);
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+    reader.close();
+    writer.finish();
+    return null;
+  }
+  // In-memory fallback for small archives
+  const reader = await ArchiveReader.open(compressedBuf);
+  const writer = await ArchiveWriter.create(FORMAT.TAR, FILTER.NONE);
+  let entry;
+  let count = 0;
+  while ((entry = reader.next()) !== null) {
+    if (entry.isDirectory) {
+      writer.addDirectory(entry.pathname, { mtime: entry.mtime, perm: entry.perm });
+    } else {
+      const data = reader.readAll();
+      writer.addFile(entry.pathname, data, { mtime: entry.mtime, perm: entry.perm });
+    }
+    count++;
+    if (onProgress && count % 50 === 0) {
+      onProgress(count, 0);
+      await new Promise((r) => setTimeout(r, 0));
     }
   }
+  reader.close();
   return writer.finish();
 }
 
@@ -58,13 +88,6 @@ function setZstdPath(p) { if (p) zstdPath = p; }
 
 function isZstdAvailable() {
   return true;
-}
-
-function isZstdCliAvailable() {
-  try {
-    execFileSync(getZstdPath(), ["--version"], { stdio: "ignore" });
-    return true;
-  } catch { return false; }
 }
 
 let bzip2Path = "bzip2";
@@ -93,10 +116,9 @@ function detectFormat(filePath) {
   if (lower.endsWith(".zip")) return "zip";
   if (lower.endsWith(".jar")) return "jar";
   if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) return "tar.gz";
-  if (lower.endsWith(".tar.bz2") || lower.endsWith(".tbz2")) return "tar.bz2";
+  if (lower.endsWith(".tar.bz2") || lower.endsWith(".tbz")) return "tar.bz2";
   if (lower.endsWith(".tar.xz") || lower.endsWith(".txz")) return "tar.xz";
-  if (lower.endsWith(".tar.zst") || lower.endsWith(".tzst")) return "tar.zst";
-  if (lower.endsWith(".tar.7z") || lower.endsWith(".t7z")) return "tar.7z";
+  if (lower.endsWith(".tar.zst") || lower.endsWith(".tar.zstd") || lower.endsWith(".tzst") || lower.endsWith(".tzs")) return "tar.zst";
   if (lower.endsWith(".tar")) return "tar";
   if (lower.endsWith(".7z")) return "7z";
   if (lower.endsWith(".rar")) return "rar";
@@ -144,7 +166,10 @@ class ZipArchive {
         _data: null,
       });
       count++;
-      if (onProgress && count % 500 === 0) onProgress(count, 0);
+      if (onProgress && count % 50 === 0) {
+        onProgress(count, 0);
+        await new Promise((r) => setTimeout(r, 0));
+      }
     }
     reader.close();
     if (onProgress) onProgress(count, count);
@@ -343,15 +368,7 @@ class TarArchive {
       // Decompress to a temp file
       const os = require("os");
       this._tempFile = path.join(os.tmpdir(), "archivesphynx-" + Date.now() + ".tar");
-      if (this.compression === "7z") {
-        const { spawn } = require("child_process");
-        const outFd = fs.openSync(this._tempFile, "w");
-        await new Promise((resolve, reject) => {
-          const proc = spawn(getSevenZipPath(), ["e", "-so", filePath], { stdio: ["ignore", outFd, "pipe"] });
-          proc.on("close", (code) => { fs.closeSync(outFd); code === 0 ? resolve() : reject(new Error("7z decompression failed")); });
-          proc.on("error", () => {});
-        });
-      } else if (this.compression === "gz") {
+      if (this.compression === "gz") {
         const { spawn } = require("child_process");
         const outFd = fs.openSync(this._tempFile, "w");
         const ok = await new Promise((resolve) => {
@@ -360,8 +377,8 @@ class TarArchive {
           proc.on("error", () => resolve(false));
         });
         if (!ok) {
-          const input = fs.readFileSync(filePath);
-          fs.writeFileSync(this._tempFile, zlib.gunzipSync(input));
+          await sphynxDecompressToTar(filePath, onProgress, this._tempFile);
+          onProgress = null;
         }
       } else if (this.compression === "bz2") {
         const { spawn } = require("child_process");
@@ -372,8 +389,8 @@ class TarArchive {
           proc.on("error", () => resolve(false));
         });
         if (!ok) {
-          const buf = fs.readFileSync(filePath);
-          fs.writeFileSync(this._tempFile, await sphynxDecompressToTar(buf));
+          await sphynxDecompressToTar(filePath, onProgress, this._tempFile);
+          onProgress = null;
         }
       } else if (this.compression === "xz") {
         const { spawn } = require("child_process");
@@ -384,8 +401,8 @@ class TarArchive {
           proc.on("error", () => resolve(false));
         });
         if (!ok) {
-          const buf = fs.readFileSync(filePath);
-          fs.writeFileSync(this._tempFile, await sphynxDecompressToTar(buf));
+          await sphynxDecompressToTar(filePath, onProgress, this._tempFile);
+          onProgress = null;
         }
       } else if (this.compression === "zst") {
         const { spawn } = require("child_process");
@@ -396,8 +413,8 @@ class TarArchive {
           proc.on("error", () => resolve(false));
         });
         if (!ok) {
-          const buf = fs.readFileSync(filePath);
-          fs.writeFileSync(this._tempFile, await sphynxDecompressToTar(buf));
+          await sphynxDecompressToTar(filePath, onProgress, this._tempFile);
+          onProgress = null;
         }
       }
       this._sourceFile = this._tempFile;
@@ -525,7 +542,7 @@ class TarArchive {
       });
 
       count++;
-      if (onProgress && count % 500 === 0) {
+      if (onProgress && count % 50 === 0) {
         onProgress(count, 0);
         await new Promise((r) => setTimeout(r, 0));
       }
@@ -559,14 +576,7 @@ class TarArchive {
       await this._packTarToFile(tempTar, onProgress);
       if (onStatus) { onStatus("Compressing…"); await new Promise((r) => setTimeout(r, 0)); }
       const { spawn, spawnSync } = require("child_process");
-      if (this.compression === "7z") {
-        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-        await new Promise((resolve, reject) => {
-          const proc = spawn(getSevenZipPath(), ["a", "-t7z", filePath, tempTar], { stdio: ["ignore", "pipe", "pipe"] });
-          proc.on("close", (code) => code === 0 ? resolve() : reject(new Error("7z compression failed")));
-          proc.on("error", reject);
-        });
-      } else if (this.compression === "bz2") {
+      if (this.compression === "bz2") {
         const outFd = fs.openSync(filePath, "w");
         const ok = await new Promise((resolve, reject) => {
           const proc = spawn(getBzip2Path(), ["-k", "-c", tempTar], { stdio: ["ignore", outFd, "pipe"] });
@@ -575,10 +585,7 @@ class TarArchive {
         });
         if (!ok) {
           bzip2FallbackUsed = true;
-          const tarBuf = fs.readFileSync(tempTar);
-          const writer = await ArchiveWriter.create(FORMAT.RAW, FILTER.BZIP2);
-          writer.addFile("data", tarBuf);
-          fs.writeFileSync(filePath, writer.finish());
+          await this._sphynxCompressFromTar(tempTar, filePath, FILTER.BZIP2);
           fs.unlinkSync(tempTar);
           return;
         }
@@ -595,16 +602,12 @@ class TarArchive {
           proc.on("error", () => resolve(false));
         });
         if (!ok) {
-          const tarBuf = fs.readFileSync(tempTar);
           if (this.compression === "gz") {
-            fs.writeFileSync(filePath, zlib.gzipSync(tarBuf));
+            await this._sphynxCompressFromTar(tempTar, filePath, FILTER.GZIP);
           } else if (this.compression === "xz") {
-            const compressed = await xzCompress(tarBuf);
-            fs.writeFileSync(filePath, compressed);
+            await this._sphynxCompressFromTar(tempTar, filePath, FILTER.XZ);
           } else if (this.compression === "zst") {
-            const w = await ArchiveWriter.create(FORMAT.RAW, FILTER.ZSTD);
-            w.addFile("data", tarBuf);
-            fs.writeFileSync(filePath, w.finish());
+            await this._streamingZstdCompress(tempTar, filePath);
           }
         }
       }
@@ -631,6 +634,31 @@ class TarArchive {
       }
       // else: already updated by the IPC handler's returned offsets
     }
+  }
+
+  async _sphynxCompressFromTar(tarPath, outPath, filter) {
+    const reader = await StreamingReader.openFile(tarPath);
+    const filterName = ["NONE", "GZIP", "BZIP2", "XZ", "ZSTD"][filter] || "NONE";
+    const writer = await StreamingWriter.createFile(outPath, "TAR", filterName);
+    for (const entry of reader) {
+      if (entry.isDirectory) {
+        writer.addDirectory(entry.pathname, { mtime: entry.mtime, perm: entry.perm });
+      } else {
+        const data = reader.readAll();
+        writer.addFile(entry.pathname, data, { mtime: entry.mtime, perm: entry.perm });
+      }
+    }
+    reader.close();
+    writer.finish();
+  }
+
+  async _streamingZstdCompress(tarPath, outPath) {
+    const stat = fs.statSync(tarPath);
+    if (stat.size > 1.5 * 1024 * 1024 * 1024) {
+      throw new Error("Zstd fallback not supported for files > 1.5 GiB. Install zstd CLI and configure its path in Settings.");
+    }
+    const tarBuf = fs.readFileSync(tarPath);
+    fs.writeFileSync(outPath, await zstdCompress(tarBuf));
   }
 
   _packTarToFile(outPath, onProgress) {
@@ -886,9 +914,8 @@ class SevenZipArchive {
         return;
       }
     }
-    // Sphynx fallback (7z requires seekable input, use in-memory reader)
-    const fileBuf = fs.readFileSync(filePath);
-    const reader = await ArchiveReader.open(fileBuf);
+    // Sphynx fallback (seekable file reader — supports >2GB via NODERAWFS)
+    const reader = await StreamingReader.openFileSeekable(filePath);
     let count = 0;
     for (const entry of reader) {
       let size = entry.size;
@@ -904,7 +931,10 @@ class SevenZipArchive {
         method: "LZMA2",
       });
       count++;
-      if (onProgress && count % 500 === 0) onProgress(count, 0);
+      if (onProgress && count % 50 === 0) {
+        onProgress(count, 0);
+        await new Promise((r) => setTimeout(r, 0));
+      }
     }
     reader.close();
     if (onProgress) onProgress(count, count);
@@ -953,7 +983,11 @@ class SevenZipArchive {
       });
       fs.rmSync(tempDir, { recursive: true, force: true });
     } else {
-      // Sphynx fallback
+      // Sphynx fallback — 7z writer buffers all data internally, limit to 2GB
+      const totalSize = this.entries.reduce((sum, e) => sum + (e.size || 0), 0);
+      if (totalSize > 2 * 1024 * 1024 * 1024) {
+        throw new Error("7z CLI not available. Writing 7z archives larger than 2 GiB requires the 7-Zip CLI. Install it and configure its path in Settings.");
+      }
       const writer = await StreamingWriter.createFile(filePath, "SEVENZIP", "NONE");
       for (const e of this.entries) {
         if (e.isDirectory) {
@@ -1030,17 +1064,13 @@ class SevenZipArchive {
       const { spawnSync } = require("child_process");
       spawnSync(getSevenZipPath(), ["x", "-o" + this._cacheDir, "-y", this._filePath], { stdio: ["ignore", "pipe", "pipe"] });
     } else {
-      // Sphynx fallback: extract all via streaming reader
+      // Sphynx fallback: extract all via seekable file reader
       const { _getModuleSync } = require("sphynx");
       const mod = _getModuleSync();
       if (!mod) return;
-      const fileBuf = fs.readFileSync(this._filePath);
       const ptr = mod._reader_new();
-      const wasmBuf = mod._malloc(fileBuf.length);
-      mod.HEAPU8.set(fileBuf, wasmBuf);
-      if (mod._reader_open_memory(ptr, wasmBuf, fileBuf.length) !== 0) {
-        mod._free(wasmBuf); mod._reader_close(ptr); return;
-      }
+      const r = mod.ccall("reader_open_filename", "number", ["number", "string"], [ptr, this._filePath]);
+      if (r !== 0) { mod._reader_close(ptr); return; }
       while (mod._reader_next(ptr) === 0) {
         const name = mod.UTF8ToString(mod._entry_pathname());
         const isDir = !!mod._entry_is_dir();
@@ -1059,7 +1089,6 @@ class SevenZipArchive {
           fs.writeFileSync(outPath, Buffer.concat(chunks));
         }
       }
-      mod._free(wasmBuf);
       mod._reader_close(ptr);
     }
   }
@@ -1069,13 +1098,9 @@ class SevenZipArchive {
     const { _getModuleSync } = require("sphynx");
     const mod = _getModuleSync();
     if (!mod) return null;
-    const fileBuf = fs.readFileSync(this._filePath);
     const ptr = mod._reader_new();
-    const wasmBuf = mod._malloc(fileBuf.length);
-    mod.HEAPU8.set(fileBuf, wasmBuf);
-    if (mod._reader_open_memory(ptr, wasmBuf, fileBuf.length) !== 0) {
-      mod._free(wasmBuf); mod._reader_close(ptr); return null;
-    }
+    const r = mod.ccall("reader_open_filename", "number", ["number", "string"], [ptr, this._filePath]);
+    if (r !== 0) { mod._reader_close(ptr); return null; }
     let result = null;
     while (mod._reader_next(ptr) === 0) {
       const name = mod.UTF8ToString(mod._entry_pathname());
@@ -1091,7 +1116,6 @@ class SevenZipArchive {
         break;
       }
     }
-    mod._free(wasmBuf);
     mod._reader_close(ptr);
     return result;
   }
@@ -1131,8 +1155,7 @@ class SevenZipArchive {
         proc.on("error", resolve);
       });
     } else {
-      const fileBuf = fs.readFileSync(this._filePath);
-      const reader = await ArchiveReader.open(fileBuf);
+      const reader = await StreamingReader.openFileSeekable(this._filePath);
       for (const entry of reader) {
         const outPath = path.join(dest, entry.pathname);
         if (entry.isDirectory) {
@@ -1157,8 +1180,7 @@ class SevenZipArchive {
     // Sphynx fallback: try to read all entries
     const errors = [];
     try {
-      const fileBuf = fs.readFileSync(this._filePath);
-      const reader = await ArchiveReader.open(fileBuf);
+      const reader = await StreamingReader.openFileSeekable(this._filePath);
       for (const entry of reader) {
         if (!entry.isDirectory) {
           try { reader.readAll(); }
@@ -1526,7 +1548,6 @@ function createArchive(filePath) {
     case "tar.bz2": return new TarArchive("bz2");
     case "tar.xz": return new TarArchive("xz");
     case "tar.zst": return new TarArchive("zst");
-    case "tar.7z": return new TarArchive("7z");
     case "7z": return new SevenZipArchive();
     case "rar": return new RarArchive();
     case "jar": return new JarArchive();
@@ -1544,4 +1565,4 @@ function openArchive(filePath) {
   return archive;
 }
 
-module.exports = { detectFormat, createArchive, setZstdPath, setBzip2Path, setGzipPath, setXzPath, setSevenZipPath, getSevenZipPath, setUnrarPath, isZstdAvailable, isZstdCliAvailable, wasBzip2FallbackUsed, ZipArchive, TarArchive, SevenZipArchive, RarArchive, JarArchive, DebArchive, RpmArchive, DmgArchive, IsoArchive };
+module.exports = { detectFormat, createArchive, setZstdPath, setBzip2Path, setGzipPath, setXzPath, setSevenZipPath, getSevenZipPath, setUnrarPath, isZstdAvailable, wasBzip2FallbackUsed, ZipArchive, TarArchive, SevenZipArchive, RarArchive, JarArchive, DebArchive, RpmArchive, DmgArchive, IsoArchive };

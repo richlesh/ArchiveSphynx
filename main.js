@@ -528,9 +528,9 @@ app.whenReady().then(() => {
 app.on("open-file", (event, filePath) => {
   event.preventDefault();
   const lower = filePath.toLowerCase();
-  const supported = [".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz", ".tar.zst", ".tzst", ".tar.7z", ".t7z", ".7z", ".rar", ".jar", ".deb", ".rpm", ".dmg", ".iso"];
+  const supported = [".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz", ".tar.xz", ".txz", ".tar.zstd", ".tar.zst", ".tzst", ".tzs", ".7z", ".rar", ".jar", ".deb", ".rpm", ".dmg", ".iso"];
   if (!supported.some((ext) => lower.endsWith(ext))) return;
-  if (lower.endsWith(".tar.zst") || lower.endsWith(".tzst")) {
+  if (lower.endsWith(".tar.zstd") || lower.endsWith(".tar.zst") || lower.endsWith(".tzst") || lower.endsWith(".tzs")) {
     const { isZstdAvailable } = require("./archive");
     if (!isZstdAvailable()) {
       dialog.showErrorBox("Cannot Open Archive", "Zstandard (zstd) command-line tool is not installed or not found.\nPlease install zstd and configure its path in Settings.");
