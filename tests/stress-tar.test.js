@@ -1,3 +1,4 @@
 jest.mock("electron", () => ({ ipcRenderer: { invoke: jest.fn() } }), { virtual: true });
 const { runStressTest } = require("./stress-helper");
-describe("Stress: tar", () => { runStressTest("tar"); });
+const size = process.env.STRESS_SIZE || "small";
+describe(`Stress ${size}: tar`, () => { runStressTest("tar", size); });

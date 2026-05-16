@@ -219,6 +219,7 @@ function buildMenu() {
     { role: "editMenu" },
     {
       label: "Window",
+      role: "window",
       submenu: [
         { role: "minimize" },
         ...(isMac ? [{ role: "zoom" }] : []),
@@ -231,6 +232,7 @@ function buildMenu() {
         ...(isMac ? [
           { type: "separator" },
           { role: "front" },
+          { type: "separator" },
         ] : []),
       ]
     }

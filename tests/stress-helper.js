@@ -4,19 +4,28 @@ const os = require("os");
 const crypto = require("crypto");
 
 const dataDir = path.join(__dirname, "data");
-const refDir = path.join(dataDir, "stress_test");
 
-const formats = [
-  { ext: "zip", file: "stress_test.zip" },
-  { ext: "tar", file: "stress_test.tar" },
-  { ext: "tgz", file: "stress_test.tgz" },
-  { ext: "tbz", file: "stress_test.tbz" },
-  { ext: "txz", file: "stress_test.txz" },
-  { ext: "tzst", file: "stress_test.tzst" },
-  { ext: "7z", file: "stress_test.7z" },
+const baseNames = {
+  small: "stress_test",
+  medium: "stress_test_2g",
+  large: "stress_test_9g",
+};
+
+const extensions = ["zip", "tar", "7z",
+  ...(process.env.EXHAUSTIVE === "true" ? ["tgz", "tbz", "txz", "tzst"] : []),
 ];
 
-function buildRefMap() {
+function getFormats(size) {
+  const base = baseNames[size] || baseNames.small;
+  return extensions.map((ext) => ({ ext, file: `${base}.${ext}` }));
+}
+
+function getRefDir(size) {
+  const base = baseNames[size] || baseNames.small;
+  return path.join(dataDir, base);
+}
+
+function buildRefMap(refDir) {
   const map = new Map();
   function walk(d, rel) {
     for (const name of fs.readdirSync(d)) {
@@ -54,7 +63,7 @@ function verifyExtracted(extractDir, refMap) {
   return errors;
 }
 
-function runStressTest(sourceExt) {
+function runStressTest(sourceExt, size = "small") {
   const { createArchive, setGzipPath, setBzip2Path, setXzPath, setZstdPath, setSevenZipPath } = require("../archive");
 
   const mode = process.env.ARCHIVE_MODE || "auto";
@@ -64,15 +73,18 @@ function runStressTest(sourceExt) {
     setGzipPath("__invalid__"); setBzip2Path("__invalid__"); setXzPath("__invalid__"); setZstdPath("__invalid__"); setSevenZipPath("/opt/homebrew/bin/7z");
   }
 
+  const formats = getFormats(size);
   const source = formats.find((f) => f.ext === sourceExt);
+  if (!source) { test("skipped (not in extensions)", () => {}); return; }
   const srcPath = path.join(dataDir, source.file);
-  const outDir = path.join(os.tmpdir(), `archivesphynx-stress-${sourceExt}-${Date.now()}`);
+  const refDir = getRefDir(size);
+  const outDir = path.join(os.tmpdir(), `archivesphynx-stress-${size}-${sourceExt}-${Date.now()}`);
 
   let refMap;
 
   beforeAll(() => {
     fs.mkdirSync(outDir, { recursive: true });
-    refMap = buildRefMap();
+    refMap = buildRefMap(refDir);
   });
 
   afterAll(() => {
@@ -111,7 +123,7 @@ function runStressTest(sourceExt) {
     const errors = verifyExtracted(extractDir, refMap);
     process.stdout.write(`${sourceExt} → ${targetExt}... ${Date.now() - startTime}ms\n`);
     expect(errors).toEqual([]);
-  }, 300000);
+  }, 10 * 60 * 1000);
 }
 
 module.exports = { runStressTest };

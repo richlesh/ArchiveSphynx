@@ -943,6 +943,7 @@
           if (fs.existsSync(result)) fs.unlinkSync(result);
           const { spawn } = require("child_process");
           const { getSevenZipPath } = require("./archive");
+          try {
           await new Promise((resolve, reject) => {
             const proc = spawn(getSevenZipPath(), ["a", "-t7z", "-bsp1", result, path.join(tempDir, "*")], { stdio: ["ignore", "pipe", "pipe"] });
             let itemCount = 0;
@@ -956,6 +957,18 @@
             proc.on("close", (code) => code === 0 ? resolve() : reject(new Error("7z compression failed")));
             proc.on("error", reject);
           });
+          } catch (e) {
+            if (!e.message.includes("ENOENT") && !e.message.includes("spawn")) throw e;
+            const { StreamingWriter } = require("sphynx");
+            const writer = await StreamingWriter.createFile(result, "SEVENZIP", "NONE");
+            const entries = fs.readdirSync(tempDir, { recursive: true, withFileTypes: true });
+            for (const ent of entries) {
+              const rel = path.relative(tempDir, path.join(ent.parentPath || ent.path, ent.name)).replace(/\\/g, "/");
+              if (ent.isDirectory()) { writer.addDirectory(rel + "/"); }
+              else { writer.addFile(rel, fs.readFileSync(path.join(ent.parentPath || ent.path, ent.name))); }
+            }
+            writer.finish();
+          }
         } finally {
           fs.rmSync(tempDir, { recursive: true, force: true });
         }
