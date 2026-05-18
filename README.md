@@ -8,14 +8,17 @@ A cross-platform archive management tool.
 
 ## Features
 
-- Open and browse ZIP, 7z, RAR, JAR, TAR (.gz, .bz2, .xz, .zst, .7z), DEB, RPM, DMG, and ISO archives
+- Open and browse ZIP, 7z, RAR, JAR, TAR (.gz, .bz2, .xz, .zst), DEB, RPM, DMG, and ISO archives
 - Async streaming decompression for large archives
 - Drag-and-drop file reordering and external file import
+- Ctrl+drag to extract files/folders directly to desktop or Finder
 - Add, delete, rename, and extract entries
 - Read-only mode for non-writable formats (RAR, DEB, RPM, DMG, ISO)
+- Save As with format conversion between supported writable formats
 - Clean macOS metadata files (`.DS_Store`, `__MACOSX`) with one click
-- Configurable executable paths for gzip, bzip2, xz, zstd, and 7-zip for optimal performance
-- Save progress reporting for TAR archives
+- Configurable executable paths for gzip, bzip2, xz, zstd, and 7-zip (auto-detected)
+- Built-in WASM fallback (sphynx) — 7z and compressed TAR work without CLI tools installed
+- Determinate progress bars with item counts for all operations
 - Settings window (save/load to `~/.archivesphynx-settings.json`)
 - License key validation (HMAC-SHA256 based)
 - Splash screen with donation link
@@ -72,16 +75,20 @@ ArchiveSphynx/
 ├── main.js              # Electron main process
 ├── index.html           # Main window
 ├── styles.css           # Main window styles
+├── archive.js           # Archive format backends (ZIP, TAR, 7z, RAR, etc.)
 ├── settings.html        # Settings window
 ├── settings.js          # Settings module (load/save)
 ├── about.html           # About dialog
-├── license_dialog.html         # License key entry
+├── license_dialog.html  # License key entry
 ├── splash.html          # Splash screen
+├── packages/sphynx/     # WASM-based archive I/O (libarchive)
 ├── config.json          # App configuration
 ├── package.json         # npm/electron-builder config
 ├── app_icon.png/.icns/.ico  # App icons
+├── doc_icon_*.png/.icns/.ico  # Document type icons
 ├── generate_license_key.py  # License key generator
 ├── sign-mac.sh          # macOS code signing script
+├── tests/               # Jest test suite
 └── .github/workflows/   # CI/CD workflows
 ```
 
@@ -99,6 +106,8 @@ python3 generate_license_key.py user@example.com
 ## Tech Stack
 
 - [Electron](https://www.electronjs.org)
+- [sphynx](packages/sphynx/) — WASM build of libarchive for streaming archive I/O
+- [Jest](https://jestjs.io) — test framework
 
 ---
 
