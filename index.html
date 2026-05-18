@@ -359,10 +359,24 @@
         if (selectedPaths.has(entry.entryName)) tr.classList.add("selected");
         if (entry._pending) tr.classList.add("pending");
         tr.addEventListener("dragstart", (e) => {
+          if (e.ctrlKey && archive) {
+            e.preventDefault();
+            return;
+          }
           if (isReadOnly()) { e.preventDefault(); return; }
           const paths = selectedPaths.has(entry.entryName) ? [...selectedPaths] : [entry.entryName];
           e.dataTransfer.setData("application/x-archivesphynx-entry", JSON.stringify(paths));
           e.dataTransfer.effectAllowed = "move";
+        });
+        tr.addEventListener("mousedown", (e) => {
+          if (e.ctrlKey && archive && e.button === 0) {
+            tr.draggable = false;
+            const paths = selectedPaths.has(entry.entryName) ? [...selectedPaths] : [entry.entryName];
+            showDragGhost(e.clientX, e.clientY, paths.length);
+            const onUp = () => { tr.draggable = !isReadOnly(); document.removeEventListener("mouseup", onUp); hideDragGhost(); };
+            document.addEventListener("mouseup", onUp);
+            setTimeout(() => dragExtract(paths), 0);
+          }
         });
         tr.addEventListener("dragover", (e) => {
           if (isReadOnly()) return;
@@ -694,11 +708,15 @@
 
     function updateProgress(current, total) {
       const track = document.getElementById("progress-track");
+      const bar = document.getElementById("progress-bar");
+      if (track.classList.contains("active") && total > 0) {
+        track.classList.remove("active");
+        bar.style.display = "";
+      }
       if (track.classList.contains("active")) {
         document.getElementById("progress-count").textContent = current + " items";
         return;
       }
-      const bar = document.getElementById("progress-bar");
       if (total > 0) {
         bar.value = Math.round((current / total) * 100);
         bar.max = 100;
@@ -833,7 +851,7 @@
           }
         }
         pendingFiles = [];
-        updateProgressLabel("Compressing…");
+        showProgress("Compressing…", false);
         await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
         await saveZip();
         setDirty(false);
@@ -857,6 +875,10 @@
         filters: getSaveFilters(),
       });
       if (!result) return;
+      if (result === archivePath) {
+        ipcRenderer.invoke("show-message", { type: "error", title: "Save As Failed", message: "Cannot Save As to the currently open file. Use Save instead." });
+        return;
+      }
       const newArchiveObj = createArchive(result);
       if (!newArchiveObj) {
         ipcRenderer.invoke("show-message", { type: "error", title: "Save Failed", message: "Unsupported archive format for: " + result });
@@ -864,7 +886,7 @@
       }
       saving = true;
       ipcRenderer.invoke("set-saving", true);
-      showProgress("Saving…", true);
+      showProgress("Extracting…", false);
       updateToolbar();
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       newArchiveObj.create();
@@ -1242,6 +1264,55 @@
       }
     }
 
+    let dragTempDir = null;
+    let dragGhost = null;
+    function showDragGhost(x, y, count) {
+      hideDragGhost();
+      dragGhost = document.createElement("div");
+      dragGhost.style.cssText = "position:fixed;z-index:9999;pointer-events:none;display:flex;align-items:center;gap:6px;padding:6px 10px;background:rgba(30,30,30,0.9);border-radius:8px;border:1px solid #555;color:#e0e0e0;font-size:12px;";
+      dragGhost.style.left = (x + 12) + "px";
+      dragGhost.style.top = (y + 12) + "px";
+      const img = document.createElement("img");
+      img.src = path.join(__dirname, "app_icon_256.png");
+      img.style.cssText = "width:32px;height:32px;";
+      dragGhost.appendChild(img);
+      dragGhost.appendChild(document.createTextNode(count > 1 ? count + " items — extracting…" : "Extracting…"));
+      document.body.appendChild(dragGhost);
+    }
+    function hideDragGhost() {
+      if (dragGhost) { dragGhost.remove(); dragGhost = null; }
+    }
+    function cleanDragTemp() {
+      if (dragTempDir) {
+        try { fs.rmSync(dragTempDir, { recursive: true, force: true }); } catch {}
+        dragTempDir = null;
+      }
+    }
+
+    function dragExtract(entryPaths) {
+      cleanDragTemp();
+      const os = require("os");
+      dragTempDir = path.join(os.tmpdir(), "archivesphynx-drag-" + Date.now());
+      fs.mkdirSync(dragTempDir, { recursive: true });
+      document.body.style.cursor = "wait";
+      const filePaths = [];
+      for (const p of entryPaths) {
+        const e = archive.getEntry(p);
+        if (e && e.isDirectory) {
+          archive.getEntries()
+            .filter((child) => child.entryName.startsWith(p))
+            .forEach((child) => archive.extractEntry(child.entryName, dragTempDir));
+          filePaths.push(path.join(dragTempDir, p.replace(/\/$/, "")));
+        } else {
+          archive.extractEntry(p, dragTempDir);
+          filePaths.push(path.join(dragTempDir, p));
+        }
+      }
+      document.body.style.cursor = "";
+      hideDragGhost();
+      ipcRenderer.send("start-drag", filePaths);
+    }
+
     async function testIntegrity() {
       if (!archive) return;
       const errors = await archive.testIntegrity();
@@ -1518,6 +1589,8 @@
       ipcRenderer.invoke("show-message", { type: "error", title: "Unexpected Error", message: msg });
       if (saving) { saving = false; ipcRenderer.invoke("set-saving", false); hideProgress(); render(); }
     });
+
+    window.addEventListener("beforeunload", cleanDragTemp);
 
     // Init
     loadColumnOrder().then(() => render());

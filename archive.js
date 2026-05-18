@@ -193,18 +193,25 @@ class ZipArchive {
     if (onProgress) onProgress(count, count);
   }
 
-  async save(filePath) {
+  async save(filePath, onProgress) {
     const writer = await StreamingWriter.createFile(filePath, "ZIP", "NONE");
-    for (const e of this.entries) {
+    const total = this.entries.length;
+    for (let i = 0; i < total; i++) {
+      const e = this.entries[i];
       if (e.isDirectory) {
         writer.addDirectory(e.entryName, { mtime: e.time ? Math.floor(e.time.getTime() / 1000) : undefined, perm: e.attr ? (e.attr >>> 16) : 0o755 });
       } else {
         const data = e._data || await this._readEntryData(e);
         writer.addFile(e.entryName, data, { mtime: e.time ? Math.floor(e.time.getTime() / 1000) : undefined, perm: e.attr ? (e.attr >>> 16) : 0o644 });
       }
+      if (onProgress && i % 50 === 0) {
+        onProgress(i + 1, total);
+        await new Promise((r) => setTimeout(r, 0));
+      }
     }
     writer.finish();
-    await this.open(filePath);
+    if (onProgress) onProgress(total, total);
+    await this.open(filePath, onProgress);
   }
 
   async _readEntryData(entry) {
@@ -320,7 +327,10 @@ class ZipArchive {
     const dirs = [];
     for (const entry of reader) {
       count++;
-      if (onProgress && count % 100 === 0) onProgress(count, total);
+      if (onProgress && count % 50 === 0) {
+        onProgress(count, total);
+        await new Promise((r) => setTimeout(r, 0));
+      }
       const mapped = remapExtractPath(entry.pathname);
       if (!mapped) continue;
       const outPath = path.join(dest, mapped);
@@ -979,8 +989,12 @@ class SevenZipArchive {
           const mtime = get("Modified") ? new Date(get("Modified")) : null;
           const method = get("Method") || "LZMA2";
           this.entries.push({ entryName, isDirectory: isDir, size, compressedSize: compressed, time: mtime, method });
-          if (onProgress) onProgress(i, blocks.length - 1);
+          if (onProgress && i % 50 === 0) {
+            onProgress(i + 1, blocks.length);
+            await new Promise((r) => setTimeout(r, 0));
+          }
         }
+        if (onProgress) onProgress(blocks.length, blocks.length);
         return;
       }
     }
@@ -1035,7 +1049,10 @@ class SevenZipArchive {
           fs.mkdirSync(path.dirname(outPath), { recursive: true });
           fs.writeFileSync(outPath, e._data);
         }
-        if (onProgress && i % 100 === 0) onProgress(i, total);
+        if (onProgress && i % 50 === 0) {
+          onProgress(i + 1, total);
+          await new Promise((r) => setTimeout(r, 0));
+        }
       }
       if (this._deleted && this._deleted.length > 0) {
         for (const name of this._deleted) {
@@ -1049,10 +1066,16 @@ class SevenZipArchive {
       }
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
       await new Promise((resolve, reject) => {
-        const proc = spawn(getSevenZipPath(), ["a", "-t7z", filePath, path.join(tempDir, "*")], { stdio: ["ignore", "pipe", "pipe"] });
+        const proc = spawn(getSevenZipPath(), ["a", "-t7z", "-bsp1", filePath, path.join(tempDir, "*")], { stdio: ["ignore", "pipe", "pipe"] });
+        proc.stdout.on("data", (chunk) => {
+          if (!onProgress) return;
+          const match = chunk.toString().match(/(\d+)%/);
+          if (match) onProgress(Math.round(parseInt(match[1]) / 100 * total), total);
+        });
         proc.on("close", (code) => code === 0 ? resolve() : reject(new Error("Failed to create 7z archive")));
         proc.on("error", reject);
       });
+      if (onProgress) onProgress(total, total);
       fs.rmSync(tempDir, { recursive: true, force: true });
       usedCli = true;
       } catch (e) {
@@ -1222,18 +1245,26 @@ class SevenZipArchive {
     }
   }
 
-  async extractAll(dest) {
+  async extractAll(dest, onProgress) {
     if (!this._filePath) return;
+    const total = this.entries.length;
     if (this._is7zAvailable()) {
       const { spawn } = require("child_process");
       await new Promise((resolve) => {
-        const proc = spawn(getSevenZipPath(), ["x", "-o" + dest, "-y", this._filePath], { stdio: ["ignore", "pipe", "pipe"] });
+        const proc = spawn(getSevenZipPath(), ["x", "-bsp1", "-o" + dest, "-y", this._filePath], { stdio: ["ignore", "pipe", "pipe"] });
+        proc.stdout.on("data", (chunk) => {
+          if (!onProgress) return;
+          const match = chunk.toString().match(/(\d+)%/);
+          if (match && total) onProgress(Math.round(parseInt(match[1]) / 100 * total), total);
+        });
         proc.on("close", resolve);
         proc.on("error", resolve);
       });
+      if (onProgress) onProgress(total, total);
     } else {
       const reader = await StreamingReader.openFileSeekable(this._filePath);
       const dirs = [];
+      let count = 0;
       for (const entry of reader) {
         const mapped = remapExtractPath(entry.pathname);
         if (!mapped) continue;
@@ -1248,8 +1279,14 @@ class SevenZipArchive {
             try { fs.utimesSync(outPath, new Date(entry.mtime * 1000), new Date(entry.mtime * 1000)); } catch {}
           }
         }
+        count++;
+        if (onProgress && count % 50 === 0) {
+          onProgress(count, total);
+          await new Promise((r) => setTimeout(r, 0));
+        }
       }
       reader.close();
+      if (onProgress) onProgress(total, total);
       mergeResourceForks(dest);
       // Infer directory timestamps from children
       for (const e of this.entries) {

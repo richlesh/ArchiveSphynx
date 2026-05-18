@@ -491,6 +491,18 @@ button{margin-top:12px;align-self:flex-end;padding:7px 24px;background:#0a84ff;c
   ipcMain.handleOnce("close-test-result", () => resultWin?.close());
 });
 
+ipcMain.on("start-drag", (_e, filePaths) => {
+  const win = BrowserWindow.fromWebContents(_e.sender);
+  if (!win) return;
+  setImmediate(() => {
+    const icon = nativeImage.createFromPath(path.join(__dirname, "app_icon_256.png")).resize({ width: 48, height: 48 });
+    win.webContents.startDrag({
+      files: filePaths,
+      icon,
+    });
+  });
+});
+
 function showSplash(nagOnly) {
   const splash = new BrowserWindow({
     width: 320,

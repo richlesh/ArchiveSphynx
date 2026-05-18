@@ -106,7 +106,9 @@
     const { execFileSync } = require("child_process");
 
     function detectTool(name, searchPaths) {
-      try { execFileSync(name, ["--version"], { timeout: 3000, stdio: "ignore" }); return name; } catch {}
+      const { spawnSync } = require("child_process");
+      const r = spawnSync(name, ["--version"], { timeout: 3000, stdio: "ignore" });
+      if (!r.error) return name;
       for (const p of searchPaths) { if (fs.existsSync(p)) return p; }
       return "";
     }
