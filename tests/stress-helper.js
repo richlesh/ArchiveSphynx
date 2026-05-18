@@ -68,9 +68,9 @@ function runStressTest(sourceExt, size = "small") {
 
   const mode = process.env.ARCHIVE_MODE || "auto";
   if (mode === "cli") {
-    setGzipPath("gzip"); setBzip2Path("bzip2"); setXzPath("xz"); setZstdPath("zstd"); setSevenZipPath("/opt/homebrew/bin/7z");
+    setGzipPath("gzip"); setBzip2Path("bzip2"); setXzPath("xz"); setZstdPath("zstd"); setSevenZipPath("7z");
   } else if (mode === "fallback") {
-    setGzipPath("__invalid__"); setBzip2Path("__invalid__"); setXzPath("__invalid__"); setZstdPath("__invalid__"); setSevenZipPath("/opt/homebrew/bin/7z");
+    setGzipPath("__invalid__"); setBzip2Path("__invalid__"); setXzPath("__invalid__"); setZstdPath("__invalid__"); setSevenZipPath("__invalid__");
   }
 
   const formats = getFormats(size);
@@ -92,25 +92,51 @@ function runStressTest(sourceExt, size = "small") {
   });
 
   test.each(formats)(`${sourceExt} → $ext`, async ({ ext: targetExt }) => {
-    const srcArchive = createArchive(srcPath);
-    await srcArchive.open(srcPath);
-    const srcEntries = srcArchive.getEntries();
+    const { StreamingReader, StreamingWriter, ArchiveReader, ArchiveWriter, FORMAT, FILTER } = require("sphynx");
+
+    const formatMap = { zip: "ZIP", tar: "TAR", "7z": "SEVENZIP" };
+    const filterMap = { tgz: "GZIP", tbz: "BZIP2", txz: "XZ", tzst: "ZSTD" };
+    const dstFormat = formatMap[targetExt] || "TAR";
+    const dstFilter = filterMap[targetExt] || "NONE";
 
     const outPath = path.join(outDir, `stress-${sourceExt}-to-${targetExt}.${targetExt}`);
-    const destArchive = createArchive(outPath);
     const startTime = Date.now();
-    destArchive.create();
 
-    for (const entry of srcEntries) {
-      if (entry.isDirectory) {
-        destArchive.addFile(entry.entryName, Buffer.alloc(0));
-      } else {
-        const data = srcArchive.getData(entry.entryName);
-        if (data) destArchive.addFile(entry.entryName, data);
+    if (size === "small") {
+      // In-memory approach for small archives
+      const srcBuf = fs.readFileSync(srcPath);
+      const reader = await ArchiveReader.open(srcBuf);
+      const writer = await ArchiveWriter.create(FORMAT[dstFormat], FILTER[dstFilter]);
+
+      for (const entry of reader) {
+        if (entry.isDirectory) {
+          writer.addDirectory(entry.pathname, { mtime: entry.mtime, perm: entry.perm });
+        } else {
+          const data = reader.readAll();
+          writer.addFile(entry.pathname, data, { mtime: entry.mtime, perm: entry.perm });
+        }
       }
+      reader.close();
+      fs.writeFileSync(outPath, writer.finish());
+    } else {
+      // Streaming approach for medium/large archives
+      const reader = sourceExt === "7z"
+        ? await StreamingReader.openFileSeekable(srcPath)
+        : await StreamingReader.openFile(srcPath);
+      const writer = await StreamingWriter.createFile(outPath, dstFormat, dstFilter);
+
+      for (const entry of reader) {
+        if (entry.isDirectory) {
+          writer.addDirectory(entry.pathname, { mtime: entry.mtime, perm: entry.perm });
+        } else {
+          const data = reader.readAll();
+          writer.addFile(entry.pathname, data, { mtime: entry.mtime, perm: entry.perm });
+        }
+      }
+      reader.close();
+      writer.finish();
     }
 
-    await destArchive.save(outPath);
     expect(fs.existsSync(outPath)).toBe(true);
 
     const extractDir = path.join(outDir, `extract-${targetExt}`);
