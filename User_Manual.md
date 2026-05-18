@@ -128,7 +128,6 @@ ArchiveSphinx can open and browse many common archive formats.
 - bzip2-compressed TAR: `.tar.bz2`, `.tbz`
 - xz-compressed TAR: `.tar.xz`, `.txz`
 - zstd-compressed TAR: `.tar.zstd`, `.tzst`
-- 7z-compressed TAR: `.tar.7z`, `.t7z`
 - Debian packages: `.deb`
 - RPM packages: `.rpm`
 - macOS disk images: `.dmg`
@@ -242,9 +241,9 @@ Available save formats include:
 - 7z
 - JAR
 - TAR
-- compressed TAR formats such as `.tgz`, `.tbz`, `.txz`, `.tzst`, and `.t7z`
+- compressed TAR formats such as `.tgz`, `.tbz`, `.txz`, and `.tzst`
 
-Some formats depend on helper tools being available. For example, zstd and 7z support may require configured helper executables.
+Some formats depend on helper tools being available. For example, zstd support may require a configured helper executable. 7z archives work without the CLI tool installed thanks to the built-in WASM fallback, but the CLI tool provides better performance for large archives.
 
 ---
 
@@ -444,6 +443,17 @@ If one or more entries are selected, the extract button shows **Extract Selected
 
 If a selected entry is a folder, ArchiveSphinx extracts that folder's contents.
 
+### Extract via Ctrl+Drag
+
+You can extract files or folders directly to the desktop, Finder, or another application by holding **Ctrl** while dragging entries out of the archive window.
+
+1. Select one or more entries.
+2. Hold **Ctrl** and begin dragging.
+3. A ghost indicator appears showing that extraction is in progress.
+4. Drop the files onto the desktop, a Finder window, or another application.
+
+The files are extracted to a temporary location and then handed to the operating system for the drop. The temporary files are cleaned up automatically.
+
 ---
 
 ## Saving Archives
@@ -480,6 +490,8 @@ To use Save As:
 4. ArchiveSphinx writes the new archive.
 
 When converting formats, ArchiveSphinx may need to extract and recompress entries internally. Large archives can take time.
+
+If you select the same file as the currently open archive, ArchiveSphinx shows an error. Use **Save** instead to save changes to the current file.
 
 ---
 
@@ -589,10 +601,11 @@ If zstd is not available, zstd save/open options may be limited.
 Used for:
 
 - `.7z`
-- `.tar.7z`
 - Reading some read-only package/image formats through 7-Zip-compatible extraction
 
 Common executable names include `7z` and `7zz`.
+
+ArchiveSphinx includes a built-in WASM fallback (sphynx) that can read and write 7z archives without the CLI tool installed. However, the CLI tool provides better performance for large archives (over 2 GB).
 
 ### Configuring Tool Paths
 
@@ -686,7 +699,7 @@ Install `zstd` and configure the path in Settings, or make sure `zstd` is availa
 
 ### 7z archives fail to open or save
 
-Install 7-Zip and configure the 7-Zip executable path in Settings.
+ArchiveSphinx can open and save 7z archives without the CLI tool using its built-in WASM fallback. However, archives larger than 2 GB require the 7-Zip CLI. Install 7-Zip and configure the executable path in Settings for best performance with large archives.
 
 ### Drag and drop does not add files
 
@@ -751,6 +764,7 @@ External helper tools such as gzip, bzip2, xz, zstd, and 7-Zip run locally on yo
 | **Shift-click** | Select range |
 | **Double-click entry** | Rename entry, if writable |
 | **Drag entries** | Move entries within a writable archive |
+| **Ctrl+drag entries** | Extract entries to desktop or Finder |
 | **Drag files into table** | Add files to a writable archive |
 | **Click folder triangle** | Expand or collapse folder |
 | **Alt/Option-click folder triangle** | Expand or collapse subfolders recursively |
