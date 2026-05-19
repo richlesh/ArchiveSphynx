@@ -92,7 +92,7 @@ function runStressTest(sourceExt, size = "small") {
   });
 
   test.each(formats)(`${sourceExt} → $ext`, async ({ ext: targetExt }) => {
-    const { StreamingReader, StreamingWriter, ArchiveReader, ArchiveWriter, FORMAT, FILTER } = require("sphynx");
+    const { StreamingReader, StreamingWriter, ArchiveReader, ArchiveWriter, FORMAT, FILTER, zstdCompressFile } = require("sphynx");
 
     const formatMap = { zip: "ZIP", tar: "TAR", "7z": "SEVENZIP" };
     const filterMap = { tgz: "GZIP", tbz: "BZIP2", txz: "XZ", tzst: "ZSTD" };
@@ -120,10 +120,18 @@ function runStressTest(sourceExt, size = "small") {
       fs.writeFileSync(outPath, writer.finish());
     } else {
       // Streaming approach for medium/large archives
+      // libarchive's WASM zstd write filter is broken; write tar then compress separately
+      const needsZstdWorkaround = targetExt === "tzst";
+      const tarPath = needsZstdWorkaround ? outPath + ".tar" : null;
+
       const reader = sourceExt === "7z"
         ? await StreamingReader.openFileSeekable(srcPath)
         : await StreamingReader.openFile(srcPath);
-      const writer = await StreamingWriter.createFile(outPath, dstFormat, dstFilter);
+      const writer = await StreamingWriter.createFile(
+        needsZstdWorkaround ? tarPath : outPath,
+        dstFormat,
+        needsZstdWorkaround ? "NONE" : dstFilter,
+      );
 
       for (const entry of reader) {
         if (entry.isDirectory) {
@@ -135,6 +143,11 @@ function runStressTest(sourceExt, size = "small") {
       }
       reader.close();
       writer.finish();
+
+      if (needsZstdWorkaround) {
+        await zstdCompressFile(tarPath, outPath);
+        fs.unlinkSync(tarPath);
+      }
     }
 
     expect(fs.existsSync(outPath)).toBe(true);
