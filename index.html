@@ -78,7 +78,7 @@
       { id: "name", label: "Name", getter: (e) => e.entryName },
       { id: "modified", label: "Modified", getter: (e) => e.time ? new Date(e.time).toLocaleString() : "" },
       { id: "size", label: "Size", getter: (e) => e.isDirectory ? "" : formatBytes(e.size || 0) },
-      { id: "compressed", label: "Compressed", getter: (e) => e.isDirectory ? "" : (e._pending ? "---" : (e.compressedSize < 0 ? "---" : formatBytes(e.compressedSize || 0))) },
+      { id: "compressed", label: "Compressed", getter: (e) => e.isDirectory ? "" : (e._pending ? "---" : (e.compressedSize < 0 ? "---" : (e.compressedSize ? formatBytes(e.compressedSize) : (archive && archive.format === "tar" ? "" : "---")))) },
       { id: "attributes", label: "Attributes", getter: (e) => formatAttr(e.attr) },
       { id: "type", label: "Type", getter: (e) => e.isDirectory ? "Folder" : extType(e.entryName) },
       { id: "method", label: "Method", getter: (e) => e.isDirectory ? "" : (e.method || "") },
@@ -914,6 +914,7 @@
             // Stream ZIP entries directly via yauzl (handles large files, no 2GB limit)
             const yauzl = require("yauzl");
             let count = 0;
+            try {
             await new Promise((resolve, reject) => {
               yauzl.open(archive._sourceFile, { lazyEntries: true, autoClose: true }, (err, zipfile) => {
                 if (err) return reject(err);
@@ -951,6 +952,9 @@
                 zipfile.on("error", reject);
               });
             });
+            } catch {
+              await archive.extractAll(tempDir, updateProgress);
+            }
           } else {
             await archive.extractAll(tempDir, updateProgress);
           }
@@ -1075,13 +1079,13 @@
           for (let i = 0; i < total; i++) {
             const entry = allEntries[i];
             if (entry.isDirectory) {
-              newArchiveObj.addFile(entry.entryName, Buffer.alloc(0));
+              newArchiveObj.addFile(entry.entryName, Buffer.alloc(0), entry.time);
             } else if (entry.size > 2 * 1024 * 1024 * 1024) {
               copySkipped.push(entry.entryName + " (" + formatBytes(entry.size) + ")");
             } else {
               try {
                 const data = archive.getData(entry.entryName);
-                if (data) newArchiveObj.addFile(entry.entryName, data);
+                if (data) newArchiveObj.addFile(entry.entryName, data, entry.time);
                 else copySkipped.push(entry.entryName + " (no data)");
               } catch (err) {
                 if (err.message && err.message.includes("allocate memory")) {

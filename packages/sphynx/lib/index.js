@@ -50,7 +50,7 @@ class ArchiveReader {
   }
 
   readData(maxSize) {
-    maxSize = maxSize || 65536;
+    maxSize = maxSize || 8 * 1024 * 1024;
     const buf = this._mod._malloc(maxSize);
     const n = this._mod._reader_read_data(this._ptr, buf, maxSize);
     if (n <= 0) { this._mod._free(buf); return null; }
@@ -62,7 +62,7 @@ class ArchiveReader {
   readAll() {
     const chunks = [];
     let chunk;
-    while ((chunk = this.readData(262144)) !== null) {
+    while ((chunk = this.readData(8 * 1024 * 1024)) !== null) {
       chunks.push(chunk);
     }
     return Buffer.concat(chunks);
@@ -88,11 +88,16 @@ class ArchiveWriter {
     this._ptr = ptr;
   }
 
-  static async create(format, filter) {
+  static async create(format, filter, options = {}) {
     const mod = await init();
     const fmt = FORMAT[format] !== undefined ? FORMAT[format] : format;
     const flt = FILTER[filter] !== undefined ? FILTER[filter] : filter;
     const ptr = mod._writer_new(fmt, flt);
+    if (options.level !== undefined) {
+      mod.ccall("writer_set_filter_option", "number",
+        ["number", "string", "string"],
+        [ptr, "compression-level", String(options.level)]);
+    }
     const r = mod._writer_open_memory(ptr);
     if (r !== 0) {
       mod._writer_close(ptr);
@@ -145,7 +150,7 @@ class StreamingReader {
     const fs = require("fs");
     const mod = await init();
     const fd = fs.openSync(filePath, "r");
-    const chunkSize = 262144;
+    const chunkSize = 8 * 1024 * 1024;
     const jsBuf = Buffer.alloc(chunkSize);
 
     const readFnPtr = mod.addFunction((bufPtr, size) => {
@@ -191,7 +196,7 @@ class StreamingReader {
   }
 
   readData(maxSize) {
-    maxSize = maxSize || 262144;
+    maxSize = maxSize || 8 * 1024 * 1024;
     const buf = this._mod._malloc(maxSize);
     const n = this._mod._reader_read_data(this._ptr, buf, maxSize);
     if (n <= 0) { this._mod._free(buf); return null; }
@@ -203,7 +208,7 @@ class StreamingReader {
   readAll() {
     const chunks = [];
     let chunk;
-    while ((chunk = this.readData(262144)) !== null) {
+    while ((chunk = this.readData(8 * 1024 * 1024)) !== null) {
       chunks.push(chunk);
     }
     return Buffer.concat(chunks);
@@ -243,11 +248,11 @@ class StreamingWriter {
     this._fd = fd;
   }
 
-  static async createFile(filePath, format, filter) {
+  static async createFile(filePath, format, filter, options = {}) {
     const fs = require("fs");
     const mod = await init();
     const fd = fs.openSync(filePath, "w");
-    const writeBuf = Buffer.alloc(64 * 1024 * 1024);
+    const writeBuf = Buffer.alloc(8 * 1024 * 1024);
     let writeBufPos = 0;
 
     const writeFnPtr = mod.addFunction((bufPtr, size) => {
@@ -266,6 +271,11 @@ class StreamingWriter {
     const fmt = FORMAT[format] !== undefined ? FORMAT[format] : format;
     const flt = FILTER[filter] !== undefined ? FILTER[filter] : filter;
     const ptr = mod._writer_new(fmt, flt);
+    if (options.level !== undefined) {
+      mod.ccall("writer_set_filter_option", "number",
+        ["number", "string", "string"],
+        [ptr, "compression-level", String(options.level)]);
+    }
     const r = mod._writer_open_streaming(ptr, writeFnPtr);
     if (r !== 0) {
       mod.removeFunction(writeFnPtr);
@@ -286,10 +296,21 @@ class StreamingWriter {
     this._mod.ccall("writer_add_entry", "number",
       ["number", "string", "number", "bigint", "bigint", "number"],
       [this._ptr, pathname, 0, BigInt(data.length), BigInt(mtime), perm]);
-    const buf = this._mod._malloc(data.length);
-    this._mod.HEAPU8.set(data, buf);
-    this._mod._writer_write_data(this._ptr, buf, data.length);
-    this._mod._free(buf);
+    const chunkSize = 8 * 1024 * 1024;
+    if (data.length <= chunkSize) {
+      const buf = this._mod._malloc(data.length);
+      this._mod.HEAPU8.set(data, buf);
+      this._mod._writer_write_data(this._ptr, buf, data.length);
+      this._mod._free(buf);
+    } else {
+      const buf = this._mod._malloc(chunkSize);
+      for (let off = 0; off < data.length; off += chunkSize) {
+        const len = Math.min(chunkSize, data.length - off);
+        this._mod.HEAPU8.set(data.subarray(off, off + len), buf);
+        this._mod._writer_write_data(this._ptr, buf, len);
+      }
+      this._mod._free(buf);
+    }
   }
 
   addFileFromPath(pathname, filePath, options = {}) {
@@ -300,7 +321,7 @@ class StreamingWriter {
     this._mod.ccall("writer_add_entry", "number",
       ["number", "string", "number", "bigint", "bigint", "number"],
       [this._ptr, pathname, 0, BigInt(stat.size), BigInt(mtime), perm]);
-    const chunkSize = 262144;
+    const chunkSize = 8 * 1024 * 1024;
     const fd = fs.openSync(filePath, "r");
     const jsBuf = Buffer.alloc(chunkSize);
     let bytesRead;
@@ -324,10 +345,69 @@ class StreamingWriter {
   finish() {
     const fs = require("fs");
     this._mod._writer_close(this._ptr);
-    if (this._flushBuf) this._flushBuf();
+    if (this._finishZstd) {
+      this._finishZstd();
+    } else if (this._flushBuf) {
+      this._flushBuf();
+    }
     this._mod.removeFunction(this._writeFnPtr);
     fs.closeSync(this._fd);
     this._ptr = null;
+  }
+
+  static async createFileZstd(filePath, level = 1) {
+    const fs = require("fs");
+    const mod = await init();
+    const fd = fs.openSync(filePath, "w");
+
+    // Init zstd streaming compressor
+    const zstdChunk = 8 * 1024 * 1024;
+    if (mod._zstd_stream_begin(level, zstdChunk) !== 0) throw new Error("zstd stream init failed");
+    const zstdInPtr = mod._malloc(zstdChunk);
+
+    const writeFnPtr = mod.addFunction((bufPtr, size) => {
+      // Compress tar output through zstd and write to file
+      let offset = 0;
+      while (offset < size) {
+        const chunk = Math.min(zstdChunk, size - offset);
+        // Copy from libarchive output buffer to zstd input buffer
+        mod.HEAPU8.copyWithin(zstdInPtr, bufPtr + offset, bufPtr + offset + chunk);
+        const n = mod._zstd_stream_compress(zstdInPtr, chunk);
+        if (n < 0) return -1;
+        if (n > 0) {
+          const outPtr = mod._zstd_stream_get_out();
+          fs.writeSync(fd, mod.HEAPU8, outPtr, n);
+        }
+        offset += chunk;
+      }
+      return size;
+    }, "iii");
+
+    const ptr = mod._writer_new(FORMAT.TAR, FILTER.NONE);
+    const r = mod._writer_open_streaming(ptr, writeFnPtr);
+    if (r !== 0) {
+      mod._free(zstdInPtr);
+      mod._zstd_stream_free();
+      mod.removeFunction(writeFnPtr);
+      fs.closeSync(fd);
+      mod._writer_close(ptr);
+      throw new Error("Failed to create streaming zstd archive writer");
+    }
+    const writer = new StreamingWriter(mod, ptr, writeFnPtr, fd);
+    writer._finishZstd = () => {
+      // Flush remaining zstd data
+      let n;
+      do {
+        n = mod._zstd_stream_end();
+        if (n > 0) {
+          const outPtr = mod._zstd_stream_get_out();
+          fs.writeSync(fd, mod.HEAPU8, outPtr, n);
+        }
+      } while (n > 0);
+      mod._free(zstdInPtr);
+      mod._zstd_stream_free();
+    };
+    return writer;
   }
 }
 
@@ -345,10 +425,10 @@ async function zstdCompress(buf, level = 3) {
   return result;
 }
 
-async function zstdCompressFile(inPath, outPath, level = 3) {
+async function zstdCompressFile(inPath, outPath, level = 1) {
   const fs = require("fs");
   const mod = await init();
-  const chunkSize = 262144;
+  const chunkSize = 8 * 1024 * 1024;
   if (mod._zstd_stream_begin(level, chunkSize) !== 0) throw new Error("zstd stream init failed");
   const inPtr = mod._malloc(chunkSize);
   const stat = fs.statSync(inPath);
@@ -366,8 +446,7 @@ async function zstdCompressFile(inPath, outPath, level = 3) {
       if (n < 0) throw new Error("zstd stream compress failed");
       if (n > 0) {
         const outPtr = mod._zstd_stream_get_out();
-        const out = Buffer.from(mod.HEAPU8.slice(outPtr, outPtr + n));
-        fs.writeSync(fdOut, out);
+        fs.writeSync(fdOut, mod.HEAPU8, outPtr, n);
       }
     }
     let n;
@@ -376,7 +455,7 @@ async function zstdCompressFile(inPath, outPath, level = 3) {
       if (n < 0) throw new Error("zstd stream end failed");
       if (n > 0) {
         const outPtr = mod._zstd_stream_get_out();
-        fs.writeSync(fdOut, Buffer.from(mod.HEAPU8.slice(outPtr, outPtr + n)));
+        fs.writeSync(fdOut, mod.HEAPU8, outPtr, n);
       }
     } while (n > 0);
   } finally {

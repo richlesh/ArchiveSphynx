@@ -29,7 +29,7 @@ body {
   border: 1px solid #555;
   border-radius: 4px;
   padding: 5px 10px;
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -51,14 +51,14 @@ body {
   padding: 4px 10px;
   background: #252525;
   border-bottom: 1px solid #3a3a3a;
-  font-size: 12px;
+  font-size: 14px;
   color: #aaa;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-#progress { color: #0a84ff; font-weight: 600; font-size: 11px; }
+#progress { color: #0a84ff; font-weight: 600; font-size: 14px; }
 #progress-bar { height: 10px; border-radius: 4px; width: 120px; vertical-align: middle; }
 #progress-track {
   display: none;
@@ -94,7 +94,7 @@ body {
 #tree-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 14px;
   table-layout: fixed;
 }
 
@@ -139,7 +139,7 @@ body {
 .toggle {
   cursor: pointer;
   user-select: none;
-  font-size: 10px;
+  font-size: 14px;
   display: inline-block;
   width: 16px;
   text-align: center;
@@ -156,7 +156,7 @@ body {
   border: 1px solid #0a84ff;
   border-radius: 3px;
   padding: 1px 4px;
-  font-size: 12px;
+  font-size: 14px;
   font-family: inherit;
   outline: none;
   width: 80%;
@@ -177,6 +177,6 @@ body {
   padding: 4px 10px;
   background: #252525;
   border-top: 1px solid #3a3a3a;
-  font-size: 12px;
+  font-size: 14px;
   color: #aaa;
 }
