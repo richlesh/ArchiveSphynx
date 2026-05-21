@@ -245,8 +245,8 @@ let licenseWin;
 function openLicense() {
   if (licenseWin) return licenseWin.focus();
   licenseWin = new BrowserWindow({
-    width: 360,
-    height: 260,
+    width: 400,
+    height: 290,
     resizable: false,
     parent: mainWin,
     modal: true,
@@ -342,7 +342,7 @@ ipcMain.handle("tar-save", async (_e, { srcFile, entriesFile, outFile, tempDir }
   const fdIn = srcFile ? fsMod.openSync(srcFile, "r") : null;
   const fdOut = fsMod.openSync(outFile, "w");
   let outPos = 0;
-  const cpBuf = Buffer.allocUnsafe(4 * 1024 * 1024);
+  const cpBuf = Buffer.allocUnsafe(8 * 1024 * 1024);
   const total = entries.length;
   const sender = _e.sender;
 

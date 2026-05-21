@@ -92,66 +92,31 @@ function runStressTest(sourceExt, size = "small") {
   });
 
   test.each(formats)(`${sourceExt} → $ext`, async ({ ext: targetExt }) => {
-    const { StreamingReader, StreamingWriter, ArchiveReader, ArchiveWriter, FORMAT, FILTER, zstdCompressFile } = require("sphynx");
-
-    const formatMap = { zip: "ZIP", tar: "TAR", "7z": "SEVENZIP" };
-    const filterMap = { tgz: "GZIP", tbz: "BZIP2", txz: "XZ", tzst: "ZSTD" };
-    const dstFormat = formatMap[targetExt] || "TAR";
-    const dstFilter = filterMap[targetExt] || "NONE";
-
     const outPath = path.join(outDir, `stress-${sourceExt}-to-${targetExt}.${targetExt}`);
     const startTime = Date.now();
 
-    if (size === "small") {
-      // In-memory approach for small archives
-      const srcBuf = fs.readFileSync(srcPath);
-      const reader = await ArchiveReader.open(srcBuf);
-      const writer = await ArchiveWriter.create(FORMAT[dstFormat], FILTER[dstFilter]);
+    // Open source archive using the app's createArchive/open path
+    const srcArchive = createArchive(srcPath);
+    await srcArchive.open(srcPath);
+    const srcEntries = srcArchive.getEntries();
 
-      for (const entry of reader) {
-        if (entry.isDirectory) {
-          writer.addDirectory(entry.pathname, { mtime: entry.mtime, perm: entry.perm });
-        } else {
-          const data = reader.readAll();
-          writer.addFile(entry.pathname, data, { mtime: entry.mtime, perm: entry.perm });
-        }
-      }
-      reader.close();
-      fs.writeFileSync(outPath, writer.finish());
-    } else {
-      // Streaming approach for medium/large archives
-      // libarchive's WASM zstd write filter is broken; write tar then compress separately
-      const needsZstdWorkaround = targetExt === "tzst";
-      const tarPath = needsZstdWorkaround ? outPath + ".tar" : null;
+    // Create destination archive using the app's createArchive/addFile/save path
+    const destArchive = createArchive(outPath);
+    destArchive.create();
 
-      const reader = sourceExt === "7z"
-        ? await StreamingReader.openFileSeekable(srcPath)
-        : await StreamingReader.openFile(srcPath);
-      const writer = await StreamingWriter.createFile(
-        needsZstdWorkaround ? tarPath : outPath,
-        dstFormat,
-        needsZstdWorkaround ? "NONE" : dstFilter,
-      );
-
-      for (const entry of reader) {
-        if (entry.isDirectory) {
-          writer.addDirectory(entry.pathname, { mtime: entry.mtime, perm: entry.perm });
-        } else {
-          const data = reader.readAll();
-          writer.addFile(entry.pathname, data, { mtime: entry.mtime, perm: entry.perm });
-        }
-      }
-      reader.close();
-      writer.finish();
-
-      if (needsZstdWorkaround) {
-        await zstdCompressFile(tarPath, outPath);
-        fs.unlinkSync(tarPath);
+    for (const entry of srcEntries) {
+      if (entry.isDirectory) {
+        destArchive.addFile(entry.entryName, Buffer.alloc(0), entry.time);
+      } else {
+        const data = srcArchive.getData(entry.entryName);
+        if (data) destArchive.addFile(entry.entryName, data, entry.time);
       }
     }
 
+    await destArchive.save(outPath);
     expect(fs.existsSync(outPath)).toBe(true);
 
+    // Verify by extracting and comparing hashes
     const extractDir = path.join(outDir, `extract-${targetExt}`);
     fs.mkdirSync(extractDir, { recursive: true });
 

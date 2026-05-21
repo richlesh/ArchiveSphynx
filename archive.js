@@ -243,13 +243,13 @@ class ZipArchive {
     }));
   }
 
-  addFile(entryName, data) {
+  addFile(entryName, data, time) {
     this.entries.push({
       entryName,
       isDirectory: entryName.endsWith("/"),
       size: data.length,
       compressedSize: 0,
-      time: new Date(),
+      time: time || new Date(),
       method: "Deflate",
       attr: 0,
       _data: entryName.endsWith("/") ? null : data,
@@ -290,9 +290,9 @@ class ZipArchive {
       const name = mod.UTF8ToString(mod._entry_pathname());
       if (name === entryName) {
         const chunks = [];
-        const readBuf = mod._malloc(262144);
+        const readBuf = mod._malloc(8 * 1024 * 1024);
         let n;
-        while ((n = mod._reader_read_data(ptr, readBuf, 262144)) > 0) {
+        while ((n = mod._reader_read_data(ptr, readBuf, 8 * 1024 * 1024)) > 0) {
           chunks.push(Buffer.from(mod.HEAPU8.slice(readBuf, readBuf + n)));
         }
         mod._free(readBuf);
@@ -692,7 +692,7 @@ class TarArchive {
   async _sphynxCompressFromTar(tarPath, outPath, filter) {
     const reader = await StreamingReader.openFile(tarPath);
     const filterName = ["NONE", "GZIP", "BZIP2", "XZ", "ZSTD"][filter] || "NONE";
-    const writer = await StreamingWriter.createFile(outPath, "TAR", filterName);
+    const writer = await StreamingWriter.createFile(outPath, "TAR", filterName, { level: 1 });
     for (const entry of reader) {
       if (entry.isDirectory) {
         writer.addDirectory(entry.pathname, { mtime: entry.mtime, perm: entry.perm });
@@ -706,12 +706,7 @@ class TarArchive {
   }
 
   async _streamingZstdCompress(tarPath, outPath) {
-    const stat = fs.statSync(tarPath);
-    if (stat.size > 2 * 1024 * 1024 * 1024) {
-      throw new Error("Zstd fallback not supported for files > 2 GiB. Install zstd CLI and configure its path in Settings.");
-    }
-    const tarBuf = fs.readFileSync(tarPath);
-    fs.writeFileSync(outPath, await zstdCompress(tarBuf));
+    await zstdCompressFile(tarPath, outPath);
   }
 
   _packTarToFile(outPath, onProgress) {
@@ -722,7 +717,7 @@ class TarArchive {
     const total = this.entries.length;
     const fdOut = fs.openSync(outPath, "w");
     let outPos = 0;
-    const cpBuf = Buffer.allocUnsafe(4 * 1024 * 1024);
+    const cpBuf = Buffer.allocUnsafe(8 * 1024 * 1024);
 
     for (let idx = 0; idx < total; idx++) {
       const entry = this.entries[idx];
@@ -830,12 +825,12 @@ class TarArchive {
     }));
   }
 
-  addFile(entryName, data) {
+  addFile(entryName, data, time) {
     this.entries.push({
       entryName,
       isDirectory: entryName.endsWith("/"),
       size: data.length,
-      time: new Date(),
+      time: time || new Date(),
       mode: entryName.endsWith("/") ? 0o755 : 0o644,
       data: entryName.endsWith("/") ? null : data,
       sourceFile: null,
@@ -1048,6 +1043,7 @@ class SevenZipArchive {
         } else if (e._data) {
           fs.mkdirSync(path.dirname(outPath), { recursive: true });
           fs.writeFileSync(outPath, e._data);
+          if (e.time) { try { fs.utimesSync(outPath, e.time, e.time); } catch {} }
         }
         if (onProgress && i % 50 === 0) {
           onProgress(i + 1, total);
@@ -1119,13 +1115,13 @@ class SevenZipArchive {
     }));
   }
 
-  addFile(entryName, data) {
+  addFile(entryName, data, time) {
     this.entries.push({
       entryName,
       isDirectory: entryName.endsWith("/"),
       size: data.length,
       compressedSize: 0,
-      time: new Date(),
+      time: time || new Date(),
       method: "LZMA2",
       _data: entryName.endsWith("/") ? null : data,
     });
@@ -1180,9 +1176,9 @@ class SevenZipArchive {
         } else {
           fs.mkdirSync(path.dirname(outPath), { recursive: true });
           const chunks = [];
-          const readBuf = mod._malloc(262144);
+          const readBuf = mod._malloc(8 * 1024 * 1024);
           let n;
-          while ((n = mod._reader_read_data(ptr, readBuf, 262144)) > 0) {
+          while ((n = mod._reader_read_data(ptr, readBuf, 8 * 1024 * 1024)) > 0) {
             chunks.push(Buffer.from(mod.HEAPU8.slice(readBuf, readBuf + n)));
           }
           mod._free(readBuf);
@@ -1206,9 +1202,9 @@ class SevenZipArchive {
       const name = mod.UTF8ToString(mod._entry_pathname());
       if (name === entryName) {
         const chunks = [];
-        const readBuf = mod._malloc(262144);
+        const readBuf = mod._malloc(8 * 1024 * 1024);
         let n;
-        while ((n = mod._reader_read_data(ptr, readBuf, 262144)) > 0) {
+        while ((n = mod._reader_read_data(ptr, readBuf, 8 * 1024 * 1024)) > 0) {
           chunks.push(Buffer.from(mod.HEAPU8.slice(readBuf, readBuf + n)));
         }
         mod._free(readBuf);

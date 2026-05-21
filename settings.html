@@ -16,9 +16,9 @@
       height: 100vh;
     }
 
-    h1 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+    h1 { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
 
-    label { display: block; font-size: 12px; color: #aaa; margin-bottom: 4px; }
+    label { display: block; font-size: 14px; color: #aaa; margin-bottom: 4px; }
 
     input, select {
       width: 100%;
@@ -95,6 +95,8 @@
     <button id="browse-7z" style="padding:6px 12px;background:#3a3a3c;color:#e0e0e0;border:1px solid #555;border-radius:8px;cursor:pointer;white-space:nowrap;">Browse…</button>
   </div>
 
+  <a href="#" id="tools-link" style="font-size:14px;color:#0a84ff;margin-bottom:10px;display:inline-block;">How to install helper tools</a>
+
   <div class="row">
     <button id="cancel-btn">Cancel</button>
     <button id="save-btn">Save</button>
@@ -113,20 +115,22 @@
       return "";
     }
 
+    const scoopGlobal = "C:\\ProgramData\\scoop\\shims";
+    const scoopUser = path.join(process.env.USERPROFILE || "", "scoop", "shims");
     const ZSTD_PATHS = process.platform === "win32"
-      ? ["C:\\Program Files\\zstd\\zstd.exe", "C:\\Program Files (x86)\\zstd\\zstd.exe"]
+      ? [scoopGlobal + "\\zstd.exe", scoopUser + "\\zstd.exe", "C:\\Program Files\\zstd\\zstd.exe", "C:\\Program Files (x86)\\zstd\\zstd.exe"]
       : ["/opt/homebrew/bin/zstd", "/usr/local/bin/zstd", "/usr/bin/zstd"];
     const BZIP2_PATHS = process.platform === "win32"
-      ? ["C:\\Program Files\\bzip2\\bzip2.exe", "C:\\Program Files (x86)\\GnuWin32\\bin\\bzip2.exe"]
+      ? [scoopGlobal + "\\bzip2.exe", scoopUser + "\\bzip2.exe", "C:\\Program Files\\bzip2\\bzip2.exe", "C:\\Program Files (x86)\\GnuWin32\\bin\\bzip2.exe"]
       : ["/opt/homebrew/bin/bzip2", "/usr/local/bin/bzip2", "/usr/bin/bzip2"];
     const GZIP_PATHS = process.platform === "win32"
-      ? ["C:\\Program Files\\pigz\\pigz.exe", "C:\\Program Files\\GnuWin32\\bin\\gzip.exe", "C:\\Program Files\\Git\\usr\\bin\\gzip.exe"]
+      ? [scoopGlobal + "\\pigz.exe", scoopUser + "\\pigz.exe", scoopGlobal + "\\gzip.exe", scoopUser + "\\gzip.exe", "C:\\Program Files\\pigz\\pigz.exe", "C:\\Program Files\\GnuWin32\\bin\\gzip.exe", "C:\\Program Files\\Git\\usr\\bin\\gzip.exe"]
       : ["/opt/homebrew/bin/pigz", "/usr/local/bin/pigz", "/usr/bin/pigz", "/usr/bin/gzip", "/opt/homebrew/bin/gzip", "/usr/local/bin/gzip"];
     const XZ_PATHS = process.platform === "win32"
-      ? ["C:\\Program Files\\xz\\xz.exe", "C:\\Program Files\\Git\\usr\\bin\\xz.exe"]
+      ? [scoopGlobal + "\\xz.exe", scoopUser + "\\xz.exe", "C:\\Program Files\\xz\\xz.exe", "C:\\Program Files\\Git\\usr\\bin\\xz.exe"]
       : ["/usr/bin/xz", "/opt/homebrew/bin/xz", "/usr/local/bin/xz"];
     const SEVENZIP_PATHS = process.platform === "win32"
-      ? ["C:\\Program Files\\7-Zip\\7z.exe", "C:\\Program Files (x86)\\7-Zip\\7z.exe"]
+      ? [scoopGlobal + "\\7z.exe", scoopUser + "\\7z.exe", "C:\\Program Files\\7-Zip\\7z.exe", "C:\\Program Files (x86)\\7-Zip\\7z.exe"]
       : ["/opt/homebrew/bin/7z", "/usr/local/bin/7z", "/usr/bin/7z", "/opt/homebrew/bin/7z", "/usr/local/bin/7z"];
 
     let current = {};
@@ -180,6 +184,11 @@
     document.getElementById("browse-7z").addEventListener("click", async () => {
       const result = await ipcRenderer.invoke("browse-file");
       if (result) document.getElementById("7z-path").value = result;
+    });
+
+    document.getElementById("tools-link").addEventListener("click", (e) => {
+      e.preventDefault();
+      require("electron").shell.openExternal("https://glowingcat.com/ArchiveSphynx_tools.html");
     });
   </script>
 </body>

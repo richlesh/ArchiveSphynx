@@ -21,7 +21,7 @@ int reader_open_memory(struct archive *a, const void *buf, size_t size) {
 
 EMSCRIPTEN_KEEPALIVE
 int reader_open_filename(struct archive *a, const char *filename) {
-  return archive_read_open_filename(a, filename, 262144);
+  return archive_read_open_filename(a, filename, 8 * 1024 * 1024);
 }
 
 // ─── Seekable Reader via JS callbacks ───
@@ -36,7 +36,7 @@ static size_t seekable_read_buf_size = 0;
 static la_ssize_t seekable_read_callback(struct archive *a, void *data, const void **out_buf) {
   if (!seekable_read_cb) return -1;
   if (!seekable_read_buf) {
-    seekable_read_buf_size = 262144;
+    seekable_read_buf_size = 8 * 1024 * 1024;
     seekable_read_buf = malloc(seekable_read_buf_size);
   }
   int n = seekable_read_cb(seekable_read_buf, (int)seekable_read_buf_size);
@@ -173,6 +173,11 @@ struct archive *writer_new(int format, int filter) {
     default: archive_write_add_filter_none(a); break;
   }
   return a;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int writer_set_filter_option(struct archive *a, const char *key, const char *value) {
+  return archive_write_set_filter_option(a, NULL, key, value);
 }
 
 static void *write_buf = NULL;
@@ -345,7 +350,7 @@ static size_t stream_read_buf_size = 0;
 static la_ssize_t streaming_read_cb(struct archive *a, void *data, const void **out_buf) {
   if (!stream_read_cb) return -1;
   if (!stream_read_buf) {
-    stream_read_buf_size = 262144;
+    stream_read_buf_size = 8 * 1024 * 1024;
     stream_read_buf = malloc(stream_read_buf_size);
   }
   int n = stream_read_cb(stream_read_buf, (int)stream_read_buf_size);
