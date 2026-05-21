@@ -971,9 +971,9 @@ class SevenZipArchive {
       const { spawnSync } = require("child_process");
       const result = spawnSync(getSevenZipPath(), ["l", "-slt", filePath], { encoding: "utf8", maxBuffer: 100 * 1024 * 1024 });
       if (result.status === 0) {
-        const blocks = result.stdout.split(/\n\n/).filter((b) => b.includes("Path = ") && !b.includes("Type = ") && !b.includes("Physical Size"));
+        const blocks = result.stdout.split(/\r?\n\r?\n/).filter((b) => b.includes("Path = ") && !b.includes("Type = ") && !b.includes("Physical Size"));
         for (let i = 0; i < blocks.length; i++) {
-          const lines = blocks[i].split("\n");
+          const lines = blocks[i].split(/\r?\n/);
           const get = (key) => { const l = lines.find((ln) => ln.startsWith(key + " = ")); return l ? l.slice(key.length + 3) : ""; };
           const entryPath = get("Path");
           if (!entryPath) continue;
@@ -1361,9 +1361,9 @@ class RarArchive {
       this._parseUnrarOutput(result.stdout, onProgress);
       return;
     }
-    const blocks = result.stdout.split(/\n\n/).filter((b) => b.includes("Path = ") && !b.includes("Type = ") && !b.includes("Physical Size"));
+    const blocks = result.stdout.split(/\r?\n\r?\n/).filter((b) => b.includes("Path = ") && !b.includes("Type = ") && !b.includes("Physical Size"));
     for (let i = 0; i < blocks.length; i++) {
-      const lines = blocks[i].split("\n");
+      const lines = blocks[i].split(/\r?\n/);
       const get = (key) => { const l = lines.find((ln) => ln.startsWith(key + " = ")); return l ? l.slice(key.length + 3) : ""; };
       const entryPath = get("Path");
       if (!entryPath) continue;
@@ -1379,9 +1379,9 @@ class RarArchive {
   }
 
   _parseUnrarOutput(stdout, onProgress) {
-    const blocks = stdout.split(/\n\n/).filter((b) => b.includes("Name:"));
+    const blocks = stdout.split(/\r?\n\r?\n/).filter((b) => b.includes("Name:"));
     for (let i = 0; i < blocks.length; i++) {
-      const lines = blocks[i].split("\n").map((l) => l.trim());
+      const lines = blocks[i].split(/\r?\n/).map((l) => l.trim());
       const get = (key) => { const l = lines.find((ln) => ln.startsWith(key + ":")); return l ? l.slice(key.length + 1).trim() : ""; };
       const entryPath = get("Name");
       if (!entryPath) continue;
@@ -1503,9 +1503,9 @@ class SevenZipReadOnlyArchive {
     const { spawnSync } = require("child_process");
     const result = spawnSync(getSevenZipPath(), ["l", "-slt", filePath], { encoding: "utf8", maxBuffer: 100 * 1024 * 1024 });
     if (result.status !== 0 && !result.stdout) throw new Error("Failed to list " + this.format + " archive: " + (result.stderr || "unknown error").trim());
-    const blocks = result.stdout.split(/\n\n/).filter((b) => b.includes("Path = ") && !b.includes("Type = ") && !b.includes("Physical Size"));
+    const blocks = result.stdout.split(/\r?\n\r?\n/).filter((b) => b.includes("Path = ") && !b.includes("Type = ") && !b.includes("Physical Size"));
     for (let i = 0; i < blocks.length; i++) {
-      const lines = blocks[i].split("\n");
+      const lines = blocks[i].split(/\r?\n/);
       const get = (key) => { const l = lines.find((ln) => ln.startsWith(key + " = ")); return l ? l.slice(key.length + 3) : ""; };
       const entryPath = get("Path");
       if (!entryPath) continue;
@@ -1630,9 +1630,9 @@ class RpmArchive extends SevenZipReadOnlyArchive {
     this._tempDir = tempDir;
     const result = spawnSync(getSevenZipPath(), ["l", "-slt", cpioPath], { encoding: "utf8", maxBuffer: 100 * 1024 * 1024 });
     if (result.status !== 0) { fs.rmSync(tempDir, { recursive: true, force: true }); return; }
-    const blocks = result.stdout.split(/\n\n/).filter((b) => b.includes("Path = ") && !b.includes("Physical Size"));
+    const blocks = result.stdout.split(/\r?\n\r?\n/).filter((b) => b.includes("Path = ") && !b.includes("Physical Size"));
     for (let i = 0; i < blocks.length; i++) {
-      const lines = blocks[i].split("\n");
+      const lines = blocks[i].split(/\r?\n/);
       const get = (key) => { const l = lines.find((ln) => ln.startsWith(key + " = ")); return l ? l.slice(key.length + 3) : ""; };
       const entryPath = get("Path");
       if (!entryPath) continue;
