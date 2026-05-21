@@ -84,8 +84,8 @@ function createWindow() {
   const settings = load();
   const bounds = settings.windowBounds || {};
   const win = new BrowserWindow({
-    width: bounds.width || 1000,
-    height: bounds.height || 700,
+    width: bounds.width || 1100,
+    height: bounds.height || 780,
     x: bounds.x,
     y: bounds.y,
     icon: appIcon,
