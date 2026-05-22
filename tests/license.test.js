@@ -1,6 +1,6 @@
 const crypto = require("crypto");
 
-const LICENSE_SALT = "ArchiveSphynx-2026";
+const { LICENSE_SALT } = require("../license.js");
 
 function expectedLicenseKey(userName) {
   const hmac = crypto.createHmac("sha256", LICENSE_SALT);

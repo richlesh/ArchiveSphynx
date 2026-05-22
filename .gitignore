@@ -1,5 +1,8 @@
 node_modules/
 dist/
+tests/data/
 .DS_Store
 .idea/
 packages/sphynx/build/
+generate_license_key.py
+license.js

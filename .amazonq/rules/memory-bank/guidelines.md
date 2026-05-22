@@ -83,3 +83,9 @@ HMAC-SHA256 based, shared between JS (main.js) and Python (generate_license_key.
 - Shebang: `#!/usr/bin/env python3`
 - stdlib only (no third-party deps)
 - Minimal: argument validation → compute → print, no classes or extra abstraction
+
+## Search Exclusions
+
+- **Never search into `tests/data/`** — this directory contains test fixtures and should be excluded from grep/search operations.
+- **Never search into `build/` directories** — these contain compiled output and should be excluded from grep/search operations.
+- **Never search into `node_modules/` directories** — these contain node libraries and should be excluded from grep/search operations.
