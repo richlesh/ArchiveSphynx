@@ -44,6 +44,11 @@ jobs:
           security list-keychain -d user -s $KEYCHAIN_PATH
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
 
+      - name: Inject license salt
+        run: |
+          echo "const LICENSE_SALT = \"${{ secrets.LICENSE_SALT }}\";" > license.js
+          echo "module.exports = { LICENSE_SALT };" >> license.js
+
       - name: Build macOS ${{ matrix.arch }} DMG
         env:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
