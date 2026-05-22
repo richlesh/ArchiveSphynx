@@ -33,6 +33,11 @@ jobs:
         if: matrix.arch == 'arm64'
         run: sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
+      - name: Inject license salt
+        run: |
+          echo "const LICENSE_SALT = \"${{ secrets.LICENSE_SALT }}\";" > license.js
+          echo "module.exports = { LICENSE_SALT };" >> license.js
+
       - name: Build Linux ${{ matrix.arch }}
         run: ./node_modules/.bin/electron-builder --linux --${{ matrix.arch }} --publish never
 

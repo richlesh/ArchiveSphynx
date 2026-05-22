@@ -32,6 +32,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Inject license salt
+        run: |
+          @"
+          const LICENSE_SALT = "${{ secrets.LICENSE_SALT }}";
+          module.exports = { LICENSE_SALT };
+          "@ | Set-Content license.js
+        shell: powershell
+
       - name: Build Windows ${{ matrix.arch }} installer
         run: ./node_modules/.bin/electron-builder --win --${{ matrix.arch }} --publish never
 
