@@ -126,6 +126,13 @@ function runStressTest(sourceExt, size = "small") {
 
     const errors = verifyExtracted(extractDir, refMap);
     process.stdout.write(`${sourceExt} → ${targetExt}... ${Date.now() - startTime}ms\n`);
+
+    // Clean up temp files created by archive backends
+    for (const a of [srcArchive, destArchive, verifyArchive]) {
+      if (a._tempFile) { try { fs.unlinkSync(a._tempFile); } catch {} }
+      if (a._cacheDir) { try { fs.rmSync(a._cacheDir, { recursive: true, force: true }); } catch {} }
+    }
+
     expect(errors).toEqual([]);
   }, 10 * 60 * 1000);
 }
