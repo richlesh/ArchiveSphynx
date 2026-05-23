@@ -142,7 +142,7 @@ function showAbout() {
   if (aboutWin && !aboutWin.isDestroyed()) return aboutWin.focus();
   aboutWin = new BrowserWindow({
     width: 320,
-    height: 420,
+    height: 450,
     resizable: false,
     minimizable: false,
     maximizable: false,
