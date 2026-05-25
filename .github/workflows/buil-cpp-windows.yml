@@ -32,8 +32,17 @@ jobs:
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.*'
-          arch: ${{ matrix.arch == 'arm64' && 'win64_msvc2022_arm64' || 'win64_msvc2022_64' }}
+          arch: win64_msvc2022_64
           cache: true
+
+      - name: Install Qt6 ARM64 target
+        if: matrix.arch == 'arm64'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          arch: win64_msvc2022_arm64_cross_compiled
+          cache: true
+          set-env: false
 
       - name: Install libarchive via vcpkg
         run: |
@@ -58,15 +67,27 @@ jobs:
       - name: Configure and build
         run: |
           $cmakeArch = if ("${{ matrix.arch }}" -eq "arm64") { "ARM64" } else { "x64" }
+          $qtPath = if ("${{ matrix.arch }}" -eq "arm64") {
+            "$env:RUNNER_WORKSPACE/Qt/6.8.3/msvc2022_arm64_cross_compiled"
+          } else {
+            "$env:Qt6_DIR/.."
+          }
           cmake -S cpp -B build -G "Visual Studio 17 2022" -A $cmakeArch `
             -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_PREFIX_PATH="$qtPath" `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
           cmake --build build --config Release
         shell: powershell
 
       - name: Deploy Qt dependencies
-        run: windeployqt build/Release/ArchiveSphynx.exe
-        shell: cmd
+        run: |
+          if ("${{ matrix.arch }}" -eq "arm64") {
+            $qtBin = "$env:RUNNER_WORKSPACE/Qt/6.8.3/msvc2022_arm64_cross_compiled/bin"
+            & "$env:Qt6_DIR/../bin/windeployqt.exe" --dir build/Release build/Release/ArchiveSphynx.exe --qtpaths "$qtBin/qtpaths.exe"
+          } else {
+            windeployqt build/Release/ArchiveSphynx.exe
+          }
+        shell: powershell
 
       - name: Create installer with NSIS
         run: |
