@@ -9,7 +9,7 @@ on:
 
 jobs:
   build-cpp-linux:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     permissions:
       contents: write
     strategy:
@@ -31,28 +31,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y qt6-base-dev libarchive-dev cmake ninja-build rpm
 
-      - name: Install ARM64 cross-compilation tools
-        if: matrix.arch == 'arm64'
-        run: |
-          sudo dpkg --add-architecture arm64
-
-          # Replace all default sources with arch-qualified versions
-          sudo rm -f /etc/apt/sources.list.d/ubuntu.sources
-          sudo tee /etc/apt/sources.list << 'SOURCES'
-          deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse
-          deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
-          deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble-backports main restricted universe multiverse
-          deb [arch=amd64] http://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ noble main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ noble-updates main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ noble-backports main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ noble-security main restricted universe multiverse
-          SOURCES
-
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            qt6-base-dev:arm64 libarchive-dev:arm64
-
       - name: Inject license salt
         run: |
           cat > cpp/src/License.cpp << EOF
@@ -64,28 +42,11 @@ jobs:
       - name: Update version in CMakeLists.txt
         run: sed -i "s/project(ArchiveSphynx VERSION [0-9.]*/project(ArchiveSphynx VERSION ${{ steps.version.outputs.version }}/" cpp/CMakeLists.txt
 
-      - name: Configure and build (x64)
-        if: matrix.arch == 'x64'
+      - name: Configure and build
         run: |
           cmake -S cpp -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr
-          cmake --build build
-
-      - name: Configure and build (arm64)
-        if: matrix.arch == 'arm64'
-        run: |
-          cmake -S cpp -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=/usr \
-            -DCMAKE_SYSTEM_NAME=Linux \
-            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
-            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
-            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
-            -DCMAKE_FIND_ROOT_PATH=/usr/aarch64-linux-gnu \
-            -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
-            -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
-            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY
           cmake --build build
 
       - name: Create dist directory
