@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Richard Lesh. All Rights Reserved.
+// License: GPL v3.0
+
 #ifndef SETTINGSDIALOG_H
 #define SETTINGSDIALOG_H
 
