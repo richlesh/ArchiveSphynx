@@ -67,7 +67,7 @@ jobs:
           APPLE_TEAM_ID: MMZ3Y97NTP
         run: |
           codesign --force --deep --options runtime \
-            --keychain "$KEYCHAIN_PATH" \
+            --keychain "$RUNNER_TEMP/build.keychain" \
             --sign "Developer ID Application: Richard Lesh (${APPLE_TEAM_ID})" \
             build/ArchiveSphynx.app
 
@@ -86,7 +86,7 @@ jobs:
           APPLE_TEAM_ID: MMZ3Y97NTP
         run: |
           codesign --force \
-            --keychain "$KEYCHAIN_PATH" \
+            --keychain "$RUNNER_TEMP/build.keychain" \
             --sign "Developer ID Application: Richard Lesh (${APPLE_TEAM_ID})" \
             dist/*.dmg
 
