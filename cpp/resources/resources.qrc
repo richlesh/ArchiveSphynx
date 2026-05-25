@@ -1,0 +1,8 @@
+<RCC>
+  <qresource prefix="/">
+    <file>icons/app_icon.png</file>
+    <file>icons/file_icon.png</file>
+    <file>icons/folder_icon.png</file>
+    <file>icons/symlink_icon.png</file>
+  </qresource>
+</RCC>
