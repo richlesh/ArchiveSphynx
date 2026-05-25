@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Richard Lesh. All Rights Reserved.
+// License: GPL v3.0
+
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
@@ -14,6 +17,7 @@ class QAction;
 class QLabel;
 class QStandardItemModel;
 class QStandardItem;
+class QSortFilterProxyModel;
 
 namespace Ui { class MainWindow; }
 
@@ -25,6 +29,7 @@ public:
   ~MainWindow() override;
 
 protected:
+  void closeEvent(QCloseEvent *event) override;
   void dragEnterEvent(QDragEnterEvent *event) override;
   void dragMoveEvent(QDragMoveEvent *event) override;
   void dropEvent(QDropEvent *event) override;
@@ -66,6 +71,7 @@ private:
   bool m_renaming = false;
   ArchiveManager *m_archiveManager = nullptr;
   QStandardItemModel *m_model = nullptr;
+  QSortFilterProxyModel *m_proxy = nullptr;
   QProgressBar *m_progressBar = nullptr;
   QToolBar *m_toolbar = nullptr;
   QLabel *m_pathBar = nullptr;
