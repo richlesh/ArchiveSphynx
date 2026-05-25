@@ -1,0 +1,163 @@
+name: Build and Release C++ Linux
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to upload assets to (e.g. v2.0.0)"
+        required: true
+
+jobs:
+  build-cpp-linux:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${TAG#v}" >> $GITHUB_OUTPUT
+        env:
+          TAG: ${{ github.event.inputs.tag }}
+
+      - name: Install Qt6 and build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-base-dev libarchive-dev cmake ninja-build rpm
+
+      - name: Install ARM64 cross-compilation tools
+        if: matrix.arch == 'arm64'
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ $(lsb_release -cs) main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ $(lsb_release -cs)-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            qt6-base-dev:arm64 libarchive-dev:arm64
+
+      - name: Inject license salt
+        run: |
+          cat > cpp/src/License.cpp << EOF
+          #include "License.h"
+
+          const QByteArray LICENSE_SALT = "${{ secrets.LICENSE_SALT }}";
+          EOF
+
+      - name: Update version in CMakeLists.txt
+        run: sed -i "s/project(ArchiveSphynx VERSION [0-9.]*/project(ArchiveSphynx VERSION ${{ steps.version.outputs.version }}/" cpp/CMakeLists.txt
+
+      - name: Configure and build (x64)
+        if: matrix.arch == 'x64'
+        run: |
+          cmake -S cpp -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr
+          cmake --build build
+
+      - name: Configure and build (arm64)
+        if: matrix.arch == 'arm64'
+        run: |
+          cmake -S cpp -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+            -DCMAKE_FIND_ROOT_PATH=/usr/aarch64-linux-gnu \
+            -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
+            -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
+            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY
+          cmake --build build
+
+      - name: Create dist directory
+        run: mkdir -p dist
+
+      - name: Package DEB
+        run: |
+          ARCH=${{ matrix.arch == 'arm64' && 'arm64' || 'amd64' }}
+          VERSION=${{ steps.version.outputs.version }}
+          PKG_DIR=pkg-deb/archivesphynx_${VERSION}_${ARCH}
+          mkdir -p ${PKG_DIR}/DEBIAN
+          mkdir -p ${PKG_DIR}/usr/bin
+          mkdir -p ${PKG_DIR}/usr/share/applications
+          mkdir -p ${PKG_DIR}/usr/share/icons/hicolor/256x256/apps
+
+          cp build/ArchiveSphynx ${PKG_DIR}/usr/bin/
+          cp cpp/resources/icons/app_icon.png ${PKG_DIR}/usr/share/icons/hicolor/256x256/apps/archivesphynx.png
+
+          cat > ${PKG_DIR}/usr/share/applications/archivesphynx.desktop << 'DESKTOP'
+          [Desktop Entry]
+          Name=ArchiveSphynx
+          Exec=ArchiveSphynx %F
+          Icon=archivesphynx
+          Type=Application
+          Categories=Utility;Archiving;
+          MimeType=application/zip;application/x-7z-compressed;application/x-tar;application/gzip;application/x-bzip2;application/x-xz;
+          DESKTOP
+
+          cat > ${PKG_DIR}/DEBIAN/control << CTRL
+          Package: archivesphynx
+          Version: ${VERSION}
+          Architecture: ${ARCH}
+          Maintainer: Richard Lesh <richard@glowingcatsoftware.com>
+          Description: Cross-platform archive management tool
+          Depends: libqt6widgets6, libarchive13
+          Section: utils
+          Priority: optional
+          CTRL
+
+          dpkg-deb --build ${PKG_DIR}
+          mv pkg-deb/*.deb dist/
+
+      - name: Package RPM
+        run: |
+          ARCH=${{ matrix.arch == 'arm64' && 'aarch64' || 'x86_64' }}
+          VERSION=${{ steps.version.outputs.version }}
+
+          mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+          mkdir -p rpmbuild/BUILDROOT/archivesphynx-${VERSION}-1.${ARCH}/usr/bin
+          mkdir -p rpmbuild/BUILDROOT/archivesphynx-${VERSION}-1.${ARCH}/usr/share/applications
+          mkdir -p rpmbuild/BUILDROOT/archivesphynx-${VERSION}-1.${ARCH}/usr/share/icons/hicolor/256x256/apps
+
+          cp build/ArchiveSphynx rpmbuild/BUILDROOT/archivesphynx-${VERSION}-1.${ARCH}/usr/bin/
+          cp cpp/resources/icons/app_icon.png rpmbuild/BUILDROOT/archivesphynx-${VERSION}-1.${ARCH}/usr/share/icons/hicolor/256x256/apps/archivesphynx.png
+          cp pkg-deb/*/usr/share/applications/archivesphynx.desktop rpmbuild/BUILDROOT/archivesphynx-${VERSION}-1.${ARCH}/usr/share/applications/
+
+          cat > rpmbuild/SPECS/archivesphynx.spec << SPEC
+          Name: archivesphynx
+          Version: ${VERSION}
+          Release: 1
+          Summary: Cross-platform archive management tool
+          License: GPL-3.0
+
+          Requires: qt6-qtbase, libarchive
+
+          %description
+          Cross-platform archive management tool.
+
+          %files
+          /usr/bin/ArchiveSphynx
+          /usr/share/applications/archivesphynx.desktop
+          /usr/share/icons/hicolor/256x256/apps/archivesphynx.png
+          SPEC
+
+          rpmbuild --define "_topdir $(pwd)/rpmbuild" \
+            --target ${ARCH} \
+            -bb rpmbuild/SPECS/archivesphynx.spec
+
+          find rpmbuild/RPMS -name "*.rpm" -exec mv {} dist/ \;
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.event.inputs.tag }} \
+            dist/*.deb dist/*.rpm --clobber
