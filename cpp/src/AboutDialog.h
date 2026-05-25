@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Richard Lesh. All Rights Reserved.
+// License: GPL v3.0
+
 #ifndef ABOUTDIALOG_H
 #define ABOUTDIALOG_H
 
@@ -11,6 +14,9 @@ class AboutDialog : public QDialog {
 public:
   explicit AboutDialog(bool licensed, QWidget *parent = nullptr);
   ~AboutDialog() override;
+
+protected:
+  void paintEvent(QPaintEvent *event) override;
 
 private:
   Ui::AboutDialog *ui;

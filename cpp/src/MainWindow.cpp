@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Richard Lesh. All Rights Reserved.
+// License: GPL v3.0
+
 #include "MainWindow.h"
 #include "ui_MainWindow.h"
 #include "SettingsDialog.h"
@@ -9,23 +12,33 @@
 #include <QMenuBar>
 #include <QFileDialog>
 #include <QDragEnterEvent>
+#include <QCloseEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
 #include <QMimeData>
 #include <QProgressBar>
 #include <QStandardItemModel>
 #include <QSortFilterProxyModel>
+#include <QSet>
+#include <QSortFilterProxyModel>
 #include <QHeaderView>
 #include <QRegularExpression>
 #include <QMouseEvent>
 #include <QToolBar>
 #include <QLabel>
+#include <QListView>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QStyleFactory>
 #include <QApplication>
 #include <QPalette>
+#include <QPainter>
+#include <QPainterPath>
+#include "Utilities.h"
 #include <QDir>
 #include <QFileInfo>
+#include <archive.h>
+#include <archive_entry.h>
 
 static void setExpandedRecursive(QTreeView *tree, const QModelIndex &index, bool expand) {
   tree->setExpanded(index, expand);
@@ -72,8 +85,13 @@ MainWindow::MainWindow(Settings &settings, bool licensed, QWidget *parent)
   ui->statusBar->addPermanentWidget(m_progressBar);
 
   connect(m_archiveManager, &ArchiveManager::progressChanged, this, [this](int percent) {
+    if (percent < 0) {
+      QApplication::processEvents();
+      return;
+    }
     m_progressBar->setVisible(true);
     m_progressBar->setValue(percent);
+    QApplication::processEvents();
     if (percent >= 100)
       m_progressBar->setVisible(false);
   });
@@ -111,7 +129,7 @@ void MainWindow::setupToolbar() {
   m_actSave = m_toolbar->addAction(QString::fromUtf8("💾 Save"));
   m_actSaveAs = m_toolbar->addAction(QString::fromUtf8("💾 Save As…"));
   m_toolbar->addSeparator();
-  m_actAdd = m_toolbar->addAction(QString::fromUtf8("➕ Add"));
+  m_actAdd = m_toolbar->addAction(QString::fromUtf8("+ Add"));
   m_actNewFolder = m_toolbar->addAction(QString::fromUtf8("📁 New Folder"));
   m_actDelete = m_toolbar->addAction(QString::fromUtf8("🗑 Delete"));
   m_toolbar->addSeparator();
@@ -158,13 +176,13 @@ void MainWindow::setupMenus() {
   fileMenu->addSeparator();
   fileMenu->addAction(tr("E&xit"), QKeySequence::Quit, this, &QWidget::close);
 
-  auto *appMenu = menuBar()->addMenu(tr("ArchiveSphynx"));
-  auto *aboutAction = appMenu->addAction(tr("About ArchiveSphynx"), this, &MainWindow::openAbout);
+  // These get moved to the macOS app menu automatically via roles
+  auto *aboutAction = fileMenu->addAction(tr("About ArchiveSphynx"), this, &MainWindow::openAbout);
   aboutAction->setMenuRole(QAction::AboutRole);
-  appMenu->addSeparator();
-  auto *settingsAction = appMenu->addAction(tr("Settings…"), this, &MainWindow::openSettings);
+  auto *settingsAction = fileMenu->addAction(tr("Settings…"), this, &MainWindow::openSettings);
   settingsAction->setMenuRole(QAction::PreferencesRole);
-  appMenu->addAction(tr("License Key…"), this, &MainWindow::openLicenseDialog);
+  auto *licenseAction = fileMenu->addAction(tr("License Key…"), this, &MainWindow::openLicenseDialog);
+  licenseAction->setMenuRole(QAction::ApplicationSpecificRole);
 }
 
 void MainWindow::updateActions() {
@@ -179,6 +197,7 @@ void MainWindow::updateActions() {
   m_actNewFolder->setEnabled(hasArchive && !readOnly);
   m_actDelete->setEnabled(hasArchive && hasSelection && !readOnly);
   m_actExtract->setEnabled(hasArchive);
+  m_actExtract->setText(hasSelection ? tr("📥 Extract Selected") : tr("📥 Extract All"));
   m_actTest->setEnabled(hasArchive);
   m_actClean->setEnabled(hasArchive && !readOnly);
 }
@@ -199,6 +218,7 @@ void MainWindow::applyColors() {
   m_toolbar->setStyleSheet(
     QString("QToolBar { padding: 4px; }"
             "QToolBar QToolButton { font-size: %2px; padding: 6px 10px; }"
+            "QToolBar QToolButton:disabled { color: gray; }"
             "QToolBar QToolButton:hover { background-color: %1; color: white; border: none; border-radius: 4px; }"
             "QToolBar QToolButton:pressed { background-color: %1; color: white; font-weight: bold; border: none; border-radius: 4px; }")
       .arg(btn.name()).arg(pt));
@@ -262,6 +282,27 @@ void MainWindow::applyFontSize() {
   m_pathBar->setFont(f);
 }
 
+void MainWindow::closeEvent(QCloseEvent *event) {
+  if (m_dirty) {
+    QMessageBox box(this);
+    box.setWindowTitle(tr("Unsaved Changes"));
+    box.setText(tr("The archive has unsaved changes. Do you want to save before closing?"));
+    box.setIconPixmap(roundedPixmap(QPixmap(":/icons/app_icon.png").scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation), 14));
+    box.setStandardButtons(QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+    int reply = box.exec();
+    if (reply == QMessageBox::Save) {
+      saveArchive();
+      event->accept();
+    } else if (reply == QMessageBox::Discard) {
+      event->accept();
+    } else {
+      event->ignore();
+    }
+  } else {
+    event->accept();
+  }
+}
+
 void MainWindow::dragEnterEvent(QDragEnterEvent *event) {
   if (event->mimeData()->hasUrls())
     event->acceptProposedAction();
@@ -288,14 +329,19 @@ void MainWindow::dropEvent(QDropEvent *event) {
     paths << url.toLocalFile();
 
   // Determine drop target
-  QModelIndex idx = ui->archiveTree->indexAt(ui->archiveTree->viewport()->mapFromGlobal(QCursor::pos()));
+  QModelIndex proxyIdx = ui->archiveTree->indexAt(ui->archiveTree->viewport()->mapFromGlobal(QCursor::pos()));
   QStandardItem *target = nullptr;
-  if (idx.isValid() && m_model) {
-    QStandardItem *item = m_model->itemFromIndex(idx.siblingAtColumn(0));
-    if (item && item->hasChildren())
-      target = item;
-    else if (item)
-      target = item->parent();
+  if (proxyIdx.isValid() && m_model && m_proxy) {
+    QModelIndex srcIdx = m_proxy->mapToSource(proxyIdx.siblingAtColumn(0));
+    QStandardItem *item = m_model->itemFromIndex(srcIdx);
+    if (item) {
+      QStandardItem *sizeItem = m_model->itemFromIndex(srcIdx.siblingAtColumn(1));
+      bool isFolder = !sizeItem || sizeItem->text().isEmpty();
+      if (isFolder)
+        target = item;
+      else
+        target = item->parent();
+    }
   }
   addExternalFiles(paths, target);
 }
@@ -309,13 +355,18 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
 }
 
 QStandardItem *MainWindow::selectedFolderItem() const {
-  if (!m_model) return nullptr;
+  if (!m_model || !m_proxy) return nullptr;
   auto sel = ui->archiveTree->selectionModel()->selectedIndexes();
   if (sel.isEmpty()) return nullptr;
-  QModelIndex idx = sel.first().siblingAtColumn(0);
+  QModelIndex proxyIdx = sel.first().siblingAtColumn(0);
+  QModelIndex idx = m_proxy->mapToSource(proxyIdx);
   QStandardItem *item = m_model->itemFromIndex(idx);
-  if (item && item->hasChildren()) return item;
-  return item ? item->parent() : nullptr;
+  if (!item) return nullptr;
+  // A folder has no size value in column 1
+  QStandardItem *sizeItem = m_model->itemFromIndex(idx.siblingAtColumn(1));
+  bool isFolder = !sizeItem || sizeItem->text().isEmpty();
+  if (isFolder) return item;
+  return item->parent();
 }
 
 void MainWindow::addExternalFiles(const QStringList &paths, QStandardItem *parent) {
@@ -326,7 +377,8 @@ void MainWindow::addExternalFiles(const QStringList &paths, QStandardItem *paren
   for (const QString &path : paths) {
     QFileInfo fi(path);
     if (fi.isDir()) {
-      auto *folderItem = new QStandardItem(dirIcon, fi.fileName());
+      QString dirName = QDir(path).dirName();
+      auto *folderItem = new QStandardItem(dirIcon, dirName);
       QList<QStandardItem *> row = {folderItem, new QStandardItem(), new QStandardItem(), new QStandardItem(), new QStandardItem(), new QStandardItem()};
       if (parent) parent->appendRow(row);
       else m_model->appendRow(row);
@@ -338,6 +390,7 @@ void MainWindow::addExternalFiles(const QStringList &paths, QStandardItem *paren
       addExternalFiles(children, folderItem);
     } else {
       auto *nameItem = new QStandardItem(fileIcon, fi.fileName());
+      nameItem->setData(path, Qt::UserRole + 1); // store source path for saving
       auto *sizeItem = new QStandardItem(humanSize(fi.size()));
       sizeItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
       QList<QStandardItem *> row = {nameItem, sizeItem, new QStandardItem(), new QStandardItem(),
@@ -350,7 +403,37 @@ void MainWindow::addExternalFiles(const QStringList &paths, QStandardItem *paren
 }
 
 void MainWindow::newArchive() {
-  ui->statusBar->showMessage(tr("New archive (not yet implemented)"));
+  QString filter = tr("ZIP Archive (*.zip);;7-Zip Archive (*.7z);;Tar Archive (*.tar);;"
+                      "Tar+Gzip (*.tar.gz);;Tar+Bzip2 (*.tar.bz2);;Tar+XZ (*.tar.xz);;Tar+Zstd (*.tar.zst)");
+  QString file = QFileDialog::getSaveFileName(this, tr("New Archive"), QString(), filter);
+  if (file.isEmpty()) return;
+
+  // If current window already has an archive, use a new window
+  MainWindow *target = this;
+  if (!m_archiveManager->currentFile().isEmpty()) {
+    target = new MainWindow(m_settings, m_licensed);
+    target->setAttribute(Qt::WA_DeleteOnClose);
+    target->show();
+  }
+
+  // Create empty model
+  target->m_model = new QStandardItemModel(target);
+  target->m_model->setHorizontalHeaderLabels({tr("Name"), tr("Size"), tr("Compressed"), tr("Method"), tr("Date Modified"), tr("Permissions")});
+  connect(target->m_model, &QStandardItemModel::itemChanged, target, &MainWindow::onItemChanged);
+
+  auto *proxy = new QSortFilterProxyModel(target);
+  proxy->setSourceModel(target->m_model);
+  proxy->setSortCaseSensitivity(Qt::CaseInsensitive);
+  proxy->setRecursiveFilteringEnabled(true);
+  target->m_proxy = proxy;
+
+  target->ui->archiveTree->setModel(target->m_proxy);
+  target->ui->archiveTree->setSortingEnabled(true);
+  target->m_pathBar->setText(file);
+  target->m_archiveManager->setCurrentFile(file);
+  target->m_dirty = true;
+  target->updateActions();
+  target->ui->statusBar->showMessage(tr("New archive: %1").arg(file));
 }
 
 void MainWindow::openArchive() {
@@ -390,21 +473,43 @@ void MainWindow::newFolder() {
 
 void MainWindow::addFiles() {
   if (!m_model) return;
-  QStringList files = QFileDialog::getOpenFileNames(this, tr("Add Files"));
-  if (files.isEmpty()) return;
+
+  QStringList paths;
+
+  // Show a message box asking what to add
+  QMessageBox box(this);
+  box.setWindowTitle(tr("Add"));
+  box.setText(tr("What would you like to add?"));
+  QAbstractButton *filesBtn = box.addButton(tr("Files"), QMessageBox::AcceptRole);
+  QAbstractButton *foldersBtn = box.addButton(tr("Folders"), QMessageBox::AcceptRole);
+  box.addButton(QMessageBox::Cancel);
+  box.exec();
+
+  QAbstractButton *clicked = box.clickedButton();
+  if (clicked == filesBtn) {
+    paths = QFileDialog::getOpenFileNames(this, tr("Add Files"), QString(), tr("All Files (*)"));
+  } else if (clicked == foldersBtn) {
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Add Folder"));
+    if (!dir.isEmpty()) paths << dir;
+  } else {
+    return;
+  }
+
+  if (paths.isEmpty()) return;
   QStandardItem *parent = selectedFolderItem();
-  addExternalFiles(files, parent);
-  ui->statusBar->showMessage(tr("Added %1 file(s)").arg(files.size()));
+  addExternalFiles(paths, parent);
+  ui->statusBar->showMessage(tr("Added %1 item(s)").arg(paths.size()));
 }
 
 void MainWindow::deleteSelected() {
-  if (!m_model) return;
-  auto indexes = ui->archiveTree->selectionModel()->selectedRows(0);
-  // Delete in reverse order to preserve indices
-  std::sort(indexes.begin(), indexes.end(), [](const QModelIndex &a, const QModelIndex &b) {
-    return a.row() > b.row();
-  });
-  for (const auto &idx : indexes) {
+  if (!m_model || !m_proxy) return;
+  auto proxyIndexes = ui->archiveTree->selectionModel()->selectedRows(0);
+  // Map to source and delete in reverse order
+  QList<QPersistentModelIndex> sourceIndexes;
+  for (const auto &pi : proxyIndexes)
+    sourceIndexes << QPersistentModelIndex(m_proxy->mapToSource(pi));
+  for (const auto &idx : sourceIndexes) {
+    if (!idx.isValid()) continue;
     QStandardItem *item = m_model->itemFromIndex(idx);
     if (!item) continue;
     if (item->parent())
@@ -413,11 +518,31 @@ void MainWindow::deleteSelected() {
       m_model->removeRow(item->row());
   }
   markDirty();
-  ui->statusBar->showMessage(tr("Deleted %1 item(s)").arg(indexes.size()));
+  ui->statusBar->showMessage(tr("Deleted %1 item(s)").arg(sourceIndexes.size()));
 }
 
 void MainWindow::openArchiveFile(const QString &filePath) {
-  if (!m_archiveManager->open(filePath)) return;
+  // If current window already has an archive, open in a new window
+  if (!m_archiveManager->currentFile().isEmpty()) {
+    auto *newWindow = new MainWindow(m_settings, m_licensed);
+    newWindow->setAttribute(Qt::WA_DeleteOnClose);
+    newWindow->show();
+    newWindow->openArchiveFile(filePath);
+    return;
+  }
+
+  m_toolbar->setEnabled(false);
+  menuBar()->setEnabled(false);
+  m_progressBar->setRange(0, 0); // indeterminate/busy mode
+  m_progressBar->setVisible(true);
+  QApplication::processEvents();
+
+  if (!m_archiveManager->open(filePath)) {
+    m_progressBar->setVisible(false);
+    m_toolbar->setEnabled(true);
+    menuBar()->setEnabled(true);
+    return;
+  }
   m_dirty = false;
 
   m_model = new QStandardItemModel(this);
@@ -437,6 +562,7 @@ void MainWindow::openArchiveFile(const QString &filePath) {
       dirPath += (i > 0 ? "/" : "") + parts[i];
       if (!dirItems.contains(dirPath)) {
         auto *item = new QStandardItem(dirIcon, parts[i]);
+        item->setData(dirPath + "/", Qt::UserRole + 2); // original archive path
         QList<QStandardItem *> row = {item, new QStandardItem(), new QStandardItem(), new QStandardItem(), new QStandardItem(), new QStandardItem()};
         if (parent) parent->appendRow(row);
         else m_model->appendRow(row);
@@ -447,7 +573,15 @@ void MainWindow::openArchiveFile(const QString &filePath) {
     return parent;
   };
 
+  int totalEntries = m_archiveManager->entries().size();
+  int entryIdx = 0;
+  m_progressBar->setRange(0, 100);
+  m_progressBar->setValue(0);
+
   for (const auto &entry : m_archiveManager->entries()) {
+    entryIdx++;
+    m_progressBar->setValue(entryIdx * 100 / qMax(totalEntries, 1));
+    QApplication::processEvents();
     QString path = entry.path;
     if (path.endsWith('/')) path.chop(1);
     QStringList parts = path.split('/', Qt::SkipEmptyParts);
@@ -460,6 +594,7 @@ void MainWindow::openArchiveFile(const QString &filePath) {
       QString key = parts.join('/');
       if (!dirItems.contains(key)) {
         auto *item = new QStandardItem(dirIcon, name);
+        item->setData(entry.path, Qt::UserRole + 2); // original archive path
         QList<QStandardItem *> row = {item, new QStandardItem(), new QStandardItem(), new QStandardItem(),
           new QStandardItem(entry.modified.toString("yyyy-MM-dd hh:mm")), new QStandardItem(entry.permissions)};
         if (parent) parent->appendRow(row);
@@ -469,6 +604,8 @@ void MainWindow::openArchiveFile(const QString &filePath) {
     } else {
       const QIcon &icon = entry.isSymlink ? linkIcon : fileIcon;
       auto *nameItem = new QStandardItem(icon, name);
+      nameItem->setData(entry.path, Qt::UserRole + 2); // original archive path
+      nameItem->setData(entry.size, Qt::UserRole + 3); // original size
       auto *sizeItem = new QStandardItem(humanSize(entry.size));
       sizeItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
       auto *compItem = new QStandardItem(entry.compressedSize > 0 ? humanSize(entry.compressedSize) : QString());
@@ -484,7 +621,16 @@ void MainWindow::openArchiveFile(const QString &filePath) {
   m_model->setSortRole(Qt::DisplayRole);
   connect(m_model, &QStandardItemModel::itemChanged, this, &MainWindow::onItemChanged);
 
-  ui->archiveTree->setModel(m_model);
+  // Enable case-insensitive sorting via proxy
+  auto *proxy = new QSortFilterProxyModel(this);
+  proxy->setSourceModel(m_model);
+  proxy->setSortCaseSensitivity(Qt::CaseInsensitive);
+  proxy->setRecursiveFilteringEnabled(true);
+  m_proxy = proxy;
+
+  m_progressBar->setVisible(false);
+
+  ui->archiveTree->setModel(m_proxy);
   ui->archiveTree->setSortingEnabled(true);
   ui->archiveTree->sortByColumn(0, Qt::AscendingOrder);
   ui->archiveTree->resizeColumnToContents(0);
@@ -498,16 +644,19 @@ void MainWindow::openArchiveFile(const QString &filePath) {
 
   connect(ui->archiveTree->selectionModel(), &QItemSelectionModel::selectionChanged,
           this, &MainWindow::updateActions);
+  m_toolbar->setEnabled(true);
+  menuBar()->setEnabled(true);
   updateActions();
 }
 
 void MainWindow::onItemDoubleClicked(const QModelIndex &index) {
-  if (!m_model || m_archiveManager->isReadOnly()) return;
-  QModelIndex nameIdx = index.siblingAtColumn(0);
-  QStandardItem *item = m_model->itemFromIndex(nameIdx);
+  if (!m_model || !m_proxy || m_archiveManager->isReadOnly()) return;
+  QModelIndex proxyNameIdx = index.siblingAtColumn(0);
+  QModelIndex srcIdx = m_proxy->mapToSource(proxyNameIdx);
+  QStandardItem *item = m_model->itemFromIndex(srcIdx);
   if (!item) return;
   m_renaming = true;
-  ui->archiveTree->edit(nameIdx);
+  ui->archiveTree->edit(proxyNameIdx);
 }
 
 void MainWindow::onItemChanged(QStandardItem *item) {
@@ -529,39 +678,604 @@ void MainWindow::onItemChanged(QStandardItem *item) {
   markDirty();
 }
 
+static void collectPaths(QStandardItem *parent, const QString &prefix,
+                         QStringList &allPaths, QHash<QString, QString> &diskSources) {
+  int rows = parent ? parent->rowCount() : 0;
+  for (int i = 0; i < rows; ++i) {
+    QStandardItem *nameItem = parent->child(i, 0);
+    QStandardItem *sizeItem = parent->child(i, 1);
+    if (!nameItem) continue;
+    QString name = nameItem->text();
+    QString path = prefix.isEmpty() ? name : prefix + "/" + name;
+    bool isDir = sizeItem && sizeItem->text().isEmpty();
+
+    if (isDir) {
+      allPaths << path + "/";
+      collectPaths(nameItem, path, allPaths, diskSources);
+    } else {
+      allPaths << path;
+      // Check for disk source
+      QVariant src = nameItem->data(Qt::UserRole + 1);
+      if (src.isValid())
+        diskSources[path] = src.toString();
+    }
+  }
+}
+
 void MainWindow::saveArchive() {
-  // TODO: write modified tree back to archive
+  if (!m_model || m_archiveManager->currentFile().isEmpty()) return;
+  m_toolbar->setEnabled(false);
+  menuBar()->setEnabled(false);
+
+  QStringList pathList;
+  QHash<QString, QString> diskSources;
+  collectPaths(m_model->invisibleRootItem(), QString(), pathList, diskSources);
+  QSet<QString> allPaths(pathList.begin(), pathList.end());
+
+  QString origPath = m_archiveManager->currentFile();
+  QString tmpPath = origPath + ".tmp";
+
+  // Close the archive so we can read it fresh
+  m_archiveManager->close();
+
+  // Copy original to a backup so we can read from it while writing
+  QString backupPath = origPath + ".bak";
+  bool hasOriginal = QFile::exists(origPath);
+  if (hasOriginal) {
+    QFile::remove(backupPath);
+    QFile::copy(origPath, backupPath);
+  }
+
+  struct archive *src = archive_read_new();
+  archive_read_support_filter_all(src);
+  archive_read_support_format_all(src);
+
+  struct archive *dst = archive_write_new();
+  QFileInfo fi(origPath);
+  QString ext = fi.suffix().toLower();
+  if (ext == "zip" || ext == "jar") archive_write_set_format_zip(dst);
+  else if (ext == "7z") archive_write_set_format_7zip(dst);
+  else {
+    archive_write_set_format_pax_restricted(dst);
+    QString base = fi.completeBaseName().toLower();
+    if (ext == "gz" || ext == "tgz" || base.endsWith(".tar")) archive_write_add_filter_gzip(dst);
+    else if (ext == "bz2") archive_write_add_filter_bzip2(dst);
+    else if (ext == "xz") archive_write_add_filter_xz(dst);
+    else if (ext == "zst") archive_write_add_filter_zstd(dst);
+    else archive_write_add_filter_none(dst);
+  }
+
+  if (archive_write_open_filename(dst, tmpPath.toUtf8().constData()) != ARCHIVE_OK) {
+    ui->statusBar->showMessage(tr("Save failed: %1").arg(QString::fromUtf8(archive_error_string(dst))));
+    archive_write_free(dst);
+    archive_read_free(src);
+    QFile::remove(backupPath);
+    m_archiveManager->open(origPath);
+    return;
+  }
+
+  QSet<QString> written;
+  int saveTotal = pathList.size();
+  int saveProgress = 0;
+  m_progressBar->setVisible(true);
+  m_progressBar->setValue(0);
+
+  // Copy entries from backup that still exist in tree
+  int readResult = hasOriginal ? archive_read_open_filename(src, backupPath.toUtf8().constData(), 10240) : ARCHIVE_FATAL;
+  if (readResult == ARCHIVE_OK) {
+    struct archive_entry *entry;
+    while (archive_read_next_header(src, &entry) == ARCHIVE_OK) {
+      QString entryPath = QString::fromUtf8(archive_entry_pathname(entry));
+      // Normalize: strip leading ./
+      QString normalized = entryPath;
+      if (normalized.startsWith("./")) normalized = normalized.mid(2);
+
+      // Try all path variations for matching
+      QString withSlash = normalized.endsWith('/') ? normalized : normalized + "/";
+      QString withoutSlash = normalized.endsWith('/') ? normalized.chopped(1) : normalized;
+      bool keep = allPaths.contains(normalized) || allPaths.contains(withSlash) || allPaths.contains(withoutSlash);
+
+      // Don't copy if we have a new disk source for this path
+      if (keep && !diskSources.contains(withoutSlash)) {
+        // Write with normalized path (without ./)
+        if (entryPath != normalized)
+          archive_entry_set_pathname(entry, normalized.toUtf8().constData());
+        // Buffer data first so we can set correct size (needed for tar)
+        QByteArray data;
+        char buf[8192];
+        la_ssize_t len;
+        while ((len = archive_read_data(src, buf, sizeof(buf))) > 0) {
+          data.append(buf, len);
+          QApplication::processEvents();
+        }
+        archive_entry_set_size(entry, data.size());
+        archive_write_header(dst, entry);
+        if (!data.isEmpty())
+          archive_write_data(dst, data.constData(), data.size());
+        archive_write_finish_entry(dst);
+        written.insert(normalized);
+        saveProgress++;
+        m_progressBar->setValue(saveProgress * 100 / qMax(saveTotal, 1));
+        QApplication::processEvents();
+      } else {
+        archive_read_data_skip(src);
+      }
+    }
+  } else if (hasOriginal) {
+    // Read failed - report error
+    ui->statusBar->showMessage(tr("Save: cannot read archive backup"));
+    archive_read_free(src);
+    archive_write_close(dst);
+    archive_write_free(dst);
+    QFile::remove(tmpPath);
+    QFile::remove(backupPath);
+    m_archiveManager->setCurrentFile(origPath);
+    m_toolbar->setEnabled(true);
+    menuBar()->setEnabled(true);
+    m_progressBar->setVisible(false);
+    return;
+  }
+  archive_read_free(src);
+
+  // Write new entries from disk
+  for (const QString &path : pathList) {
+    if (written.contains(path)) continue;
+    bool isDir = path.endsWith('/');
+    QString cleanPath = isDir ? path.chopped(1) : path;
+
+    struct archive_entry *entry = archive_entry_new();
+    archive_entry_set_pathname(entry, path.toUtf8().constData());
+    if (isDir) {
+      archive_entry_set_filetype(entry, AE_IFDIR);
+      archive_entry_set_perm(entry, 0755);
+    } else {
+      archive_entry_set_filetype(entry, AE_IFREG);
+      archive_entry_set_perm(entry, 0644);
+      if (diskSources.contains(cleanPath)) {
+        QFileInfo sfi(diskSources[cleanPath]);
+        archive_entry_set_size(entry, sfi.size());
+      }
+    }
+    archive_entry_set_mtime(entry, QDateTime::currentDateTime().toSecsSinceEpoch(), 0);
+    archive_write_header(dst, entry);
+
+    if (!isDir && diskSources.contains(cleanPath)) {
+      QFile f(diskSources[cleanPath]);
+      if (f.open(QIODevice::ReadOnly)) {
+        char buf[8192]; qint64 len;
+        while ((len = f.read(buf, sizeof(buf))) > 0)
+          archive_write_data(dst, buf, len);
+      }
+    }
+    archive_entry_free(entry);
+    saveProgress++;
+    m_progressBar->setValue(saveProgress * 100 / qMax(saveTotal, 1));
+    QApplication::processEvents();
+  }
+
+  archive_write_close(dst);
+  archive_write_free(dst);
+
+  QFile::remove(origPath);
+  QFile::rename(tmpPath, origPath);
+  if (hasOriginal) QFile::remove(backupPath);
+
+  m_progressBar->setVisible(false);
+
+  // Reopen
+  m_archiveManager->open(origPath);
   m_dirty = false;
+  m_toolbar->setEnabled(true);
+  menuBar()->setEnabled(true);
   updateActions();
-  ui->statusBar->showMessage(tr("Archive saved."));
+  ui->statusBar->showMessage(tr("Archive saved: %1 (%2 entries copied, %3 total)").arg(origPath).arg(written.size()).arg(pathList.size()));
 }
 
 void MainWindow::saveArchiveAs() {
-  QString file = QFileDialog::getSaveFileName(this, tr("Save Archive As"), QString(),
-    tr("Archives (*.zip *.7z *.tar *.tar.gz *.tar.bz2 *.tar.xz *.tar.zst)"));
+  if (!m_model) return;
+
+  // Default to same basename with new extension
+  QFileInfo orig(m_archiveManager->currentFile());
+  QString baseName = orig.completeBaseName();
+  // Strip .tar from double extensions like .tar.gz
+  if (baseName.endsWith(".tar")) baseName.chop(4);
+  QString defaultDir = orig.absolutePath();
+
+  QString filter = tr("ZIP Archive (*.zip);;7-Zip Archive (*.7z);;Tar Archive (*.tar);;"
+                      "Tar+Gzip (*.tar.gz);;Tar+Bzip2 (*.tar.bz2);;Tar+XZ (*.tar.xz);;Tar+Zstd (*.tar.zst)");
+  QString selectedFilter;
+  QString file = QFileDialog::getSaveFileName(this, tr("Save Archive As"),
+    defaultDir + "/" + baseName, filter, &selectedFilter);
   if (file.isEmpty()) return;
-  // TODO: write archive to new path
+  m_toolbar->setEnabled(false);
+  menuBar()->setEnabled(false);
+
+  QStringList pathList;
+  QHash<QString, QString> diskSources;
+  collectPaths(m_model->invisibleRootItem(), QString(), pathList, diskSources);
+  QSet<QString> allPaths(pathList.begin(), pathList.end());
+
+  QString origArchive = m_archiveManager->currentFile();
+  QString tmpPath = file + ".tmp";
+
+  // Close archive so we can read it
+  m_archiveManager->close();
+
+  // Copy original to backup for safe reading
+  QString backupPath = origArchive + ".bak";
+  QFile::remove(backupPath);
+  QFile::copy(origArchive, backupPath);
+
+  struct archive *src = archive_read_new();
+  archive_read_support_filter_all(src);
+  archive_read_support_format_all(src);
+
+  struct archive *dst = archive_write_new();
+  QFileInfo fi(file);
+  QString ext = fi.suffix().toLower();
+  if (ext == "zip") archive_write_set_format_zip(dst);
+  else if (ext == "7z") archive_write_set_format_7zip(dst);
+  else {
+    archive_write_set_format_pax_restricted(dst);
+    QString cbase = fi.completeBaseName().toLower();
+    if (ext == "gz" || ext == "tgz" || cbase.endsWith(".tar")) archive_write_add_filter_gzip(dst);
+    else if (ext == "bz2") archive_write_add_filter_bzip2(dst);
+    else if (ext == "xz") archive_write_add_filter_xz(dst);
+    else if (ext == "zst") archive_write_add_filter_zstd(dst);
+    else archive_write_add_filter_none(dst);
+  }
+
+  if (archive_write_open_filename(dst, tmpPath.toUtf8().constData()) != ARCHIVE_OK) {
+    ui->statusBar->showMessage(tr("Save As failed: %1").arg(QString::fromUtf8(archive_error_string(dst))));
+    archive_write_free(dst);
+    archive_read_free(src);
+    QFile::remove(backupPath);
+    return;
+  }
+
+  QSet<QString> written;
+  int saveTotal = pathList.size();
+  int saveProgress = 0;
+  m_progressBar->setVisible(true);
+  m_progressBar->setValue(0);
+
+  if (archive_read_open_filename(src, backupPath.toUtf8().constData(), 10240) == ARCHIVE_OK) {
+    struct archive_entry *entry;
+    while (archive_read_next_header(src, &entry) == ARCHIVE_OK) {
+      QString entryPath = QString::fromUtf8(archive_entry_pathname(entry));
+      QString normalized = entryPath;
+      if (normalized.startsWith("./")) normalized = normalized.mid(2);
+
+      bool keep = allPaths.contains(normalized) || allPaths.contains(entryPath);
+      QString cleanPath = normalized.endsWith('/') ? normalized.chopped(1) : normalized;
+
+      if (keep && !diskSources.contains(cleanPath)) {
+        if (entryPath != normalized)
+          archive_entry_set_pathname(entry, normalized.toUtf8().constData());
+        // Buffer data first so we can set correct size (needed for tar)
+        QByteArray data;
+        char cbuf[8192];
+        la_ssize_t clen;
+        while ((clen = archive_read_data(src, cbuf, sizeof(cbuf))) > 0) {
+          data.append(cbuf, clen);
+          QApplication::processEvents();
+        }
+        archive_entry_set_size(entry, data.size());
+        archive_write_header(dst, entry);
+        if (!data.isEmpty())
+          archive_write_data(dst, data.constData(), data.size());
+        archive_write_finish_entry(dst);
+        written.insert(normalized);
+        saveProgress++;
+        m_progressBar->setValue(saveProgress * 100 / qMax(saveTotal, 1));
+        QApplication::processEvents();
+      } else {
+        archive_read_data_skip(src);
+      }
+    }
+  }
+  archive_read_free(src);
+
+  for (const QString &path : pathList) {
+    if (written.contains(path)) continue;
+    bool isDir = path.endsWith('/');
+    QString cleanPath = isDir ? path.chopped(1) : path;
+
+    struct archive_entry *entry = archive_entry_new();
+    archive_entry_set_pathname(entry, path.toUtf8().constData());
+    if (isDir) {
+      archive_entry_set_filetype(entry, AE_IFDIR);
+      archive_entry_set_perm(entry, 0755);
+    } else {
+      archive_entry_set_filetype(entry, AE_IFREG);
+      archive_entry_set_perm(entry, 0644);
+      if (diskSources.contains(cleanPath)) {
+        QFileInfo sfi(diskSources[cleanPath]);
+        archive_entry_set_size(entry, sfi.size());
+      }
+    }
+    archive_entry_set_mtime(entry, QDateTime::currentDateTime().toSecsSinceEpoch(), 0);
+    archive_write_header(dst, entry);
+
+    if (!isDir && diskSources.contains(cleanPath)) {
+      QFile file(diskSources[cleanPath]);
+      if (file.open(QIODevice::ReadOnly)) {
+        char buf[8192]; qint64 len;
+        while ((len = file.read(buf, sizeof(buf))) > 0)
+          archive_write_data(dst, buf, len);
+      }
+    }
+    archive_entry_free(entry);
+    saveProgress++;
+    m_progressBar->setValue(saveProgress * 100 / qMax(saveTotal, 1));
+    QApplication::processEvents();
+  }
+
+  archive_write_close(dst);
+  archive_write_free(dst);
+
+  m_progressBar->setVisible(false);
+
+  QFile::remove(backupPath);
+
+  QFile::remove(file);
+  QFile::rename(tmpPath, file);
+
   m_dirty = false;
-  updateActions();
+  m_archiveManager->open(file);
   m_pathBar->setText(file);
+  m_toolbar->setEnabled(true);
+  menuBar()->setEnabled(true);
+  updateActions();
   ui->statusBar->showMessage(tr("Archive saved as: %1").arg(file));
 }
 
 void MainWindow::extractArchive() {
   QString dir = QFileDialog::getExistingDirectory(this, tr("Extract To"));
   if (dir.isEmpty()) return;
-  if (m_archiveManager->extractTo(dir))
-    ui->statusBar->showMessage(tr("Extracted to: %1").arg(dir));
-  else
-    ui->statusBar->showMessage(tr("Extraction failed"));
+
+  bool hasSelection = ui->archiveTree->selectionModel() &&
+                      ui->archiveTree->selectionModel()->hasSelection();
+
+  if (!hasSelection) {
+    // Extract all
+    m_toolbar->setEnabled(false);
+    menuBar()->setEnabled(false);
+    m_progressBar->setVisible(true);
+    if (m_archiveManager->extractTo(dir))
+      ui->statusBar->showMessage(tr("Extracted all to: %1").arg(dir));
+    else
+      ui->statusBar->showMessage(tr("Extraction failed"));
+    m_progressBar->setVisible(false);
+    m_toolbar->setEnabled(true);
+    menuBar()->setEnabled(true);
+    return;
+  }
+
+  // Build set of selected paths (including children of selected folders)
+  QSet<QString> selectedPaths;
+  auto indexes = ui->archiveTree->selectionModel()->selectedRows(0);
+
+  for (const auto &proxyIdx : indexes) {
+    QModelIndex srcIdx = m_proxy->mapToSource(proxyIdx);
+    QStandardItem *item = m_model->itemFromIndex(srcIdx);
+    if (!item) continue;
+    // Build full path by walking up parents
+    QStringList parts;
+    QStandardItem *cur = item;
+    while (cur) {
+      parts.prepend(cur->text());
+      cur = cur->parent();
+    }
+    QString fullPath = parts.join("/");
+    QStandardItem *sizeItem = item->parent()
+      ? item->parent()->child(item->row(), 1)
+      : m_model->item(item->row(), 1);
+    bool isDir = !sizeItem || sizeItem->text().isEmpty();
+    selectedPaths.insert(isDir ? fullPath + "/" : fullPath);
+    // Add all children recursively for folders
+    if (isDir) {
+      QStringList childPaths;
+      QHash<QString, QString> dummy;
+      collectPaths(item, fullPath, childPaths, dummy);
+      for (const auto &p : childPaths)
+        selectedPaths.insert(p);
+    }
+  }
+
+  // Extract only matching entries from the archive
+  QString archivePath = m_archiveManager->currentFile();
+
+  struct archive *src = archive_read_new();
+  archive_read_support_filter_all(src);
+  archive_read_support_format_all(src);
+
+  int extracted = 0;
+  int extractTotal = selectedPaths.size();
+  m_toolbar->setEnabled(false);
+  menuBar()->setEnabled(false);
+  m_progressBar->setVisible(true);
+  m_progressBar->setValue(0);
+
+  if (archive_read_open_filename(src, archivePath.toUtf8().constData(), 10240) == ARCHIVE_OK) {
+    struct archive_entry *entry;
+    while (archive_read_next_header(src, &entry) == ARCHIVE_OK) {
+      QString entryPath = QString::fromUtf8(archive_entry_pathname(entry));
+      if (entryPath.startsWith("./")) entryPath = entryPath.mid(2);
+      entryPath = entryPath.trimmed();
+
+      // Match with and without trailing slash
+      QString withSlash = entryPath.endsWith('/') ? entryPath : entryPath + "/";
+      QString withoutSlash = entryPath.endsWith('/') ? entryPath.chopped(1) : entryPath;
+      bool match = selectedPaths.contains(entryPath) || selectedPaths.contains(withSlash) || selectedPaths.contains(withoutSlash);
+
+      if (match) {
+        // Create directories and write file manually
+        QString fullPath = QDir::cleanPath(dir + "/" + entryPath);
+        if (archive_entry_filetype(entry) == AE_IFDIR) {
+          QDir().mkpath(fullPath);
+          extracted++;
+          m_progressBar->setValue(extracted * 100 / qMax(extractTotal, 1));
+          QApplication::processEvents();
+        } else {
+          // Ensure parent directory exists
+          QDir().mkpath(QFileInfo(fullPath).absolutePath());
+          QFile outFile(fullPath);
+          if (outFile.open(QIODevice::WriteOnly)) {
+            char buf[8192];
+            la_ssize_t len;
+            while ((len = archive_read_data(src, buf, sizeof(buf))) > 0) {
+              outFile.write(buf, len);
+              QApplication::processEvents();
+            }
+            outFile.close();
+            extracted++;
+            m_progressBar->setValue(extracted * 100 / qMax(extractTotal, 1));
+            QApplication::processEvents();
+          }
+        }
+      } else {
+        archive_read_data_skip(src);
+      }
+    }
+  }
+  archive_read_free(src);
+
+  // Also extract newly-added files that aren't in the archive (from disk sources)
+  QHash<QString, QString> diskSources;
+  QStringList dummyPaths;
+  for (const auto &proxyIdx : indexes) {
+    QModelIndex srcIdx = m_proxy->mapToSource(proxyIdx);
+    QStandardItem *item = m_model->itemFromIndex(srcIdx);
+    if (!item) continue;
+    QStringList parts;
+    QStandardItem *cur = item;
+    while (cur) { parts.prepend(cur->text()); cur = cur->parent(); }
+    QString prefix = parts.size() > 1 ? parts.mid(0, parts.size() - 1).join("/") : QString();
+    collectPaths(item, prefix.isEmpty() ? item->text() : prefix + "/" + item->text(), dummyPaths, diskSources);
+    // Check the item itself
+    QVariant src = item->data(Qt::UserRole + 1);
+    if (src.isValid()) {
+      QString itemPath = parts.join("/");
+      diskSources[itemPath] = src.toString();
+    }
+  }
+  for (auto it = diskSources.begin(); it != diskSources.end(); ++it) {
+    QString destFile = dir + "/" + it.key();
+    QFileInfo dfi(destFile);
+    QDir().mkpath(dfi.absolutePath());
+    QFile::copy(it.value(), destFile);
+    extracted++;
+  }
+
+  m_progressBar->setVisible(false);
+  m_toolbar->setEnabled(true);
+  menuBar()->setEnabled(true);
+  ui->statusBar->showMessage(tr("Extracted %1 of %2 selected item(s) to: %3").arg(extracted).arg(selectedPaths.size()).arg(dir));
 }
 
 void MainWindow::testIntegrity() {
-  ui->statusBar->showMessage(tr("Test integrity (not yet implemented)"));
+  if (m_archiveManager->currentFile().isEmpty()) return;
+
+  m_toolbar->setEnabled(false);
+  menuBar()->setEnabled(false);
+  m_progressBar->setVisible(true);
+  m_progressBar->setValue(0);
+
+  QString archivePath = m_archiveManager->currentFile();
+  struct archive *a = archive_read_new();
+  archive_read_support_filter_all(a);
+  archive_read_support_format_all(a);
+
+  if (archive_read_open_filename(a, archivePath.toUtf8().constData(), 10240) != ARCHIVE_OK) {
+    ui->statusBar->showMessage(tr("Test failed: cannot open archive"));
+    archive_read_free(a);
+    m_progressBar->setVisible(false);
+    m_toolbar->setEnabled(true);
+    menuBar()->setEnabled(true);
+    return;
+  }
+
+  int total = m_archiveManager->entries().size();
+  int current = 0;
+  bool ok = true;
+  QString errorMsg;
+
+  struct archive_entry *entry;
+  while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
+    // Try to read all data to verify integrity
+    char buf[8192];
+    la_ssize_t len;
+    while ((len = archive_read_data(a, buf, sizeof(buf))) > 0) {}
+    if (len < 0) {
+      ok = false;
+      errorMsg = QString::fromUtf8(archive_error_string(a));
+      break;
+    }
+    current++;
+    m_progressBar->setValue(current * 100 / qMax(total, 1));
+    QApplication::processEvents();
+  }
+
+  archive_read_free(a);
+  m_progressBar->setVisible(false);
+  m_toolbar->setEnabled(true);
+  menuBar()->setEnabled(true);
+
+  QMessageBox box(this);
+  box.setWindowTitle(tr("Test Integrity"));
+  box.setIconPixmap(roundedPixmap(QPixmap(":/icons/app_icon.png").scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation), 14));
+  if (ok)
+    box.setText(tr("All %1 entries passed integrity check.").arg(current));
+  else
+    box.setText(tr("Integrity check failed at entry %1: %2").arg(current).arg(errorMsg));
+  box.exec();
 }
 
 void MainWindow::cleanMacOS() {
-  ui->statusBar->showMessage(tr("Clean macOS (not yet implemented)"));
+  if (!m_model) return;
+
+  // Remove macOS metadata entries: __MACOSX/, .DS_Store, ._* files
+  auto isMacJunk = [](const QString &name) {
+    return name == ".DS_Store" || name.startsWith("._") || name == "__MACOSX";
+  };
+
+  int removed = 0;
+  std::function<void(QStandardItem *)> cleanItem = [&](QStandardItem *parent) {
+    for (int i = parent->rowCount() - 1; i >= 0; --i) {
+      QStandardItem *child = parent->child(i, 0);
+      if (!child) continue;
+      if (isMacJunk(child->text())) {
+        parent->removeRow(i);
+        removed++;
+      } else {
+        cleanItem(child);
+      }
+    }
+  };
+
+  // Clean root level
+  for (int i = m_model->rowCount() - 1; i >= 0; --i) {
+    QStandardItem *item = m_model->item(i, 0);
+    if (!item) continue;
+    if (isMacJunk(item->text())) {
+      m_model->removeRow(i);
+      removed++;
+    } else {
+      cleanItem(item);
+    }
+  }
+
+  QMessageBox box(this);
+  box.setWindowTitle(tr("Clean macOS"));
+  box.setIconPixmap(roundedPixmap(QPixmap(":/icons/app_icon.png").scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation), 14));
+  if (removed > 0) {
+    markDirty();
+    box.setText(tr("%1 macOS item(s) cleaned.").arg(removed));
+  } else {
+    box.setText(tr("No macOS items found."));
+  }
+  box.exec();
 }
 
 void MainWindow::openSettings() {
