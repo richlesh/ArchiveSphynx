@@ -36,14 +36,12 @@ jobs:
           cache: true
 
       - name: Install libarchive via vcpkg
-        run: |
-          vcpkg install libarchive:${{ matrix.arch == 'arm64' && 'arm64-windows' || 'x64-windows' }}
-        env:
-          VCPKG_DEFAULT_TRIPLET: ${{ matrix.arch == 'arm64' && 'arm64-windows' || 'x64-windows' }}
+        if: matrix.arch == 'x64'
+        run: vcpkg install libarchive:x64-windows
 
       - name: Install Qt6 ARM64 via vcpkg
         if: matrix.arch == 'arm64'
-        run: vcpkg install qt6:arm64-windows
+        run: vcpkg install qtbase:arm64-windows libarchive:arm64-windows
         env:
           VCPKG_DEFAULT_TRIPLET: arm64-windows
 
