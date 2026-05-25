@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Richard Lesh. All Rights Reserved.
+// License: GPL v3.0
+
 #ifndef SPLASHSCREEN_H
 #define SPLASHSCREEN_H
 
@@ -11,6 +14,7 @@ public:
   explicit SplashScreen(QWidget *parent = nullptr);
 
 protected:
+  void paintEvent(QPaintEvent *event) override;
   void mousePressEvent(QMouseEvent *event) override;
 
 private:

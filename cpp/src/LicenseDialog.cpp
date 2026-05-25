@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Richard Lesh. All Rights Reserved.
+// License: GPL v3.0
+
 #include "LicenseDialog.h"
 #include "ui_LicenseDialog.h"
 #include "Settings.h"
