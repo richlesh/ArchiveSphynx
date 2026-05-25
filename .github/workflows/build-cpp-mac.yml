@@ -9,7 +9,7 @@ on:
 
 jobs:
   build-cpp-mac:
-    runs-on: ${{ matrix.arch == 'arm64' && 'macos-latest' || 'macos-13' }}
+    runs-on: macos-13
     permissions:
       contents: write
     strategy:
@@ -57,8 +57,10 @@ jobs:
 
       - name: Configure and build
         run: |
+          CMAKE_ARCH=${{ matrix.arch == 'arm64' && 'arm64' || 'x86_64' }}
           cmake -S cpp -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=${CMAKE_ARCH} \
             -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6);$(brew --prefix libarchive)"
           cmake --build build
 
