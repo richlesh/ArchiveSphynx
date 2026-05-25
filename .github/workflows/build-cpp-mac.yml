@@ -34,17 +34,19 @@ jobs:
           CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
-          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain-db
+          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
           KEYCHAIN_PASSWORD=build-keychain-password
           security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security default-keychain -s $KEYCHAIN_PATH
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           echo "$CERTIFICATE_BASE64" | base64 --decode -o $RUNNER_TEMP/cert.p12
           security import $RUNNER_TEMP/cert.p12 -k $KEYCHAIN_PATH -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security list-keychain -d user -s $KEYCHAIN_PATH login.keychain-db
+          security list-keychain -d user -s $KEYCHAIN_PATH
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          echo "=== Identities in build keychain ==="
           security find-identity -v $KEYCHAIN_PATH
+          echo "=== Identities in search list ==="
+          security find-identity -v
 
       - name: Inject license salt
         run: |
@@ -69,7 +71,6 @@ jobs:
           APPLE_TEAM_ID: MMZ3Y97NTP
         run: |
           codesign --force --deep --options runtime \
-            --keychain $RUNNER_TEMP/build.keychain-db \
             --sign "Developer ID Application: Richard Lesh (${APPLE_TEAM_ID})" \
             build/ArchiveSphynx.app
 
@@ -88,7 +89,6 @@ jobs:
           APPLE_TEAM_ID: MMZ3Y97NTP
         run: |
           codesign --force \
-            --keychain $RUNNER_TEMP/build.keychain-db \
             --sign "Developer ID Application: Richard Lesh (${APPLE_TEAM_ID})" \
             dist/*.dmg
 
