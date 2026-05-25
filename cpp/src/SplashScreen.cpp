@@ -1,31 +1,57 @@
 #include "SplashScreen.h"
 
+#include <QApplication>
 #include <QLabel>
 #include <QVBoxLayout>
 #include <QMouseEvent>
 #include <QDesktopServices>
 #include <QUrl>
-#include <QPushButton>
+#include <QPainter>
+#include <QPainterPath>
+#include "Utilities.h"
 
 SplashScreen::SplashScreen(QWidget *parent) : QDialog(parent) {
-  setWindowTitle("ArchiveSphynx");
-  setFixedSize(400, 250);
   setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
+  setAttribute(Qt::WA_TranslucentBackground);
+  setFixedSize(280 , 360);
+  setModal(true);
 
   auto *layout = new QVBoxLayout(this);
-  auto *title = new QLabel("<h1>ArchiveSphynx</h1>", this);
-  title->setAlignment(Qt::AlignCenter);
-  layout->addWidget(title);
+  layout->setAlignment(Qt::AlignCenter);
+  layout->setSpacing(8);
+  layout->setContentsMargins(15, 15, 15, 15);
 
-  auto *msg = new QLabel(tr("This software is unregistered.\nPlease consider supporting development."), this);
-  msg->setAlignment(Qt::AlignCenter);
-  layout->addWidget(msg);
+  // App icon
+  auto *iconLabel = new QLabel(this);
+  iconLabel->setPixmap(roundedPixmap(QPixmap(":/icons/app_icon.png").scaled(128, 128, Qt::KeepAspectRatio, Qt::SmoothTransformation), 28));
+  iconLabel->setAlignment(Qt::AlignCenter);
+  layout->addWidget(iconLabel);
 
-  auto *donateBtn = new QPushButton(tr("Donate"), this);
-  connect(donateBtn, &QPushButton::clicked, this, []() {
-    QDesktopServices::openUrl(QUrl("https://glowingcatsoftware.com"));
-  });
-  layout->addWidget(donateBtn, 0, Qt::AlignCenter);
+  layout->addSpacing(10);
+
+  // App name
+  auto *nameLabel = new QLabel("<b style='font-size:20px;'>ArchiveSphynx</b>", this);
+  nameLabel->setAlignment(Qt::AlignCenter);
+  layout->addWidget(nameLabel);
+
+  // Version
+  auto *versionLabel = new QLabel(tr("Version %1").arg(qApp->applicationVersion()), this);
+  versionLabel->setAlignment(Qt::AlignCenter);
+  layout->addWidget(versionLabel);
+
+  layout->addSpacing(15);
+
+  // Message with link
+  auto *msgLabel = new QLabel(
+    tr("If you enjoy using this product<br>"
+       "please consider donating to help<br>"
+       "fund this and other open source<br>"
+       "projects at <a href='https://glowingcatsoftware.com' style='color:#4488ff;'>Glowing Cat Software</a>."),
+    this);
+  msgLabel->setAlignment(Qt::AlignCenter);
+  msgLabel->setWordWrap(true);
+  msgLabel->setOpenExternalLinks(true);
+  layout->addWidget(msgLabel);
 
   // Auto-dismiss after 20 seconds
   m_timer.setSingleShot(true);
@@ -33,7 +59,21 @@ SplashScreen::SplashScreen(QWidget *parent) : QDialog(parent) {
   m_timer.start(20000);
 }
 
+void SplashScreen::paintEvent(QPaintEvent *) {
+  QPainter p(this);
+  p.setRenderHint(QPainter::Antialiasing);
+  p.setPen(Qt::NoPen);
+  p.setBrush(palette().window());
+  p.drawRoundedRect(rect(), 20, 20);
+}
+
 void SplashScreen::mousePressEvent(QMouseEvent *event) {
-  Q_UNUSED(event);
-  accept();
+  QWidget *child = childAt(event->pos());
+  if (auto *label = qobject_cast<QLabel *>(child))
+    if (!label->text().contains("<a "))
+      accept();
+    else
+      QDialog::mousePressEvent(event);
+  else
+    accept();
 }
