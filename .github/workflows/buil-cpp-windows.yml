@@ -1,0 +1,131 @@
+name: Build and Release C++ Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to upload assets to (e.g. v2.0.0)"
+        required: true
+
+jobs:
+  build-cpp-windows:
+    runs-on: windows-latest
+    permissions:
+      id-token: write
+      contents: write
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          $ver = "${{ github.event.inputs.tag }}" -replace '^v', ''
+          echo "version=$ver" >> $env:GITHUB_OUTPUT
+        shell: powershell
+
+      - name: Install Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          arch: ${{ matrix.arch == 'arm64' && 'win64_msvc2022_arm64' || 'win64_msvc2022_64' }}
+          cache: true
+
+      - name: Install libarchive via vcpkg
+        run: |
+          vcpkg install libarchive:${{ matrix.arch == 'arm64' && 'arm64-windows' || 'x64-windows' }}
+        env:
+          VCPKG_DEFAULT_TRIPLET: ${{ matrix.arch == 'arm64' && 'arm64-windows' || 'x64-windows' }}
+
+      - name: Inject license salt
+        run: |
+          @"
+          #include "License.h"
+
+          const QByteArray LICENSE_SALT = "${{ secrets.LICENSE_SALT }}";
+          "@ | Set-Content cpp/src/License.cpp
+        shell: powershell
+
+      - name: Update version in CMakeLists.txt
+        run: |
+          (Get-Content cpp/CMakeLists.txt) -replace 'project\(ArchiveSphynx VERSION [0-9.]+', "project(ArchiveSphynx VERSION ${{ steps.version.outputs.version }}" | Set-Content cpp/CMakeLists.txt
+        shell: powershell
+
+      - name: Configure and build
+        run: |
+          $cmakeArch = if ("${{ matrix.arch }}" -eq "arm64") { "ARM64" } else { "x64" }
+          cmake -S cpp -B build -G "Visual Studio 17 2022" -A $cmakeArch `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          cmake --build build --config Release
+        shell: powershell
+
+      - name: Deploy Qt dependencies
+        run: windeployqt build/Release/ArchiveSphynx.exe
+        shell: cmd
+
+      - name: Create installer with NSIS
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $arch = "${{ matrix.arch }}"
+          @"
+          !include "MUI2.nsh"
+          Name "ArchiveSphynx ${version}"
+          OutFile "dist\ArchiveSphynx-${version}-${arch}-setup.exe"
+          InstallDir "`$PROGRAMFILES\ArchiveSphynx"
+          RequestExecutionLevel admin
+
+          !insertmacro MUI_PAGE_DIRECTORY
+          !insertmacro MUI_PAGE_INSTFILES
+          !insertmacro MUI_LANGUAGE "English"
+
+          Section
+            SetOutPath "`$INSTDIR"
+            File /r "build\Release\*.*"
+            CreateShortcut "`$DESKTOP\ArchiveSphynx.lnk" "`$INSTDIR\ArchiveSphynx.exe"
+            CreateDirectory "`$SMPROGRAMS\ArchiveSphynx"
+            CreateShortcut "`$SMPROGRAMS\ArchiveSphynx\ArchiveSphynx.lnk" "`$INSTDIR\ArchiveSphynx.exe"
+            WriteUninstaller "`$INSTDIR\uninstall.exe"
+          SectionEnd
+
+          Section "Uninstall"
+            RMDir /r "`$INSTDIR"
+            Delete "`$DESKTOP\ArchiveSphynx.lnk"
+            RMDir /r "`$SMPROGRAMS\ArchiveSphynx"
+          SectionEnd
+          "@ | Set-Content installer.nsi
+
+          mkdir dist
+          makensis installer.nsi
+        shell: powershell
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign installer with Azure Artifact Signing
+        uses: azure/artifact-signing-action@v1
+        with:
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\dist
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Upload installer to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.event.inputs.tag }} `
+            (Get-ChildItem dist\*.exe | Select-Object -ExpandProperty FullName) --clobber
+        shell: powershell
