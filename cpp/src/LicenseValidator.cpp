@@ -1,9 +1,8 @@
 #include "LicenseValidator.h"
+#include "License.h"
 
 #include <QCryptographicHash>
 #include <QMessageAuthenticationCode>
-
-static const QByteArray LICENSE_SALT = "ArchiveSphynx-2026";
 
 QString LicenseValidator::generate(const QString &userName) const {
   QByteArray input = userName.toLower().trimmed().toUtf8();

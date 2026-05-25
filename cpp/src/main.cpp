@@ -2,6 +2,7 @@
 #include <QStyleFactory>
 #include <QPalette>
 #include <QStyle>
+#include <QIcon>
 #include "MainWindow.h"
 #include "SplashScreen.h"
 #include "Settings.h"
@@ -25,6 +26,9 @@ static void applyAppTheme(const Settings &settings) {
     p.setColor(QPalette::ToolTipBase, QColor("#3c3c3c"));
     p.setColor(QPalette::ToolTipText, QColor("#e0e0e0"));
     p.setColor(QPalette::PlaceholderText, QColor("#888888"));
+    p.setColor(QPalette::Disabled, QPalette::ButtonText, QColor("#666666"));
+    p.setColor(QPalette::Disabled, QPalette::WindowText, QColor("#666666"));
+    p.setColor(QPalette::Disabled, QPalette::Text, QColor("#666666"));
     qApp->setPalette(p);
   } else if (theme == "Light") {
     qApp->setStyle(QStyleFactory::create("Fusion"));
@@ -37,6 +41,9 @@ static void applyAppTheme(const Settings &settings) {
     p.setColor(QPalette::ButtonText, QColor("#1a1a1a"));
     p.setColor(QPalette::Highlight, QColor("#3399ff"));
     p.setColor(QPalette::HighlightedText, QColor("#ffffff"));
+    p.setColor(QPalette::Disabled, QPalette::ButtonText, QColor("#aaaaaa"));
+    p.setColor(QPalette::Disabled, QPalette::WindowText, QColor("#aaaaaa"));
+    p.setColor(QPalette::Disabled, QPalette::Text, QColor("#aaaaaa"));
     qApp->setPalette(p);
   } else {
     // System default
@@ -49,8 +56,9 @@ static void applyAppTheme(const Settings &settings) {
 int main(int argc, char *argv[]) {
   QApplication app(argc, argv);
   app.setApplicationName("ArchiveSphynx");
-  app.setApplicationVersion("1.2.0");
+  app.setApplicationVersion(APP_VERSION);
   app.setOrganizationName("Richard Lesh");
+  app.setWindowIcon(QIcon(":/icons/app_icon.png"));
 
   Settings settings;
   settings.load();

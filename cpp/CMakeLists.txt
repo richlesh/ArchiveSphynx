@@ -24,6 +24,8 @@ set(SOURCES
   src/ArchiveManager.cpp
   src/Settings.cpp
   src/LicenseValidator.cpp
+  src/License.cpp
+  src/Utilities.cpp
 )
 
 set(HEADERS
@@ -35,6 +37,8 @@ set(HEADERS
   src/ArchiveManager.h
   src/Settings.h
   src/LicenseValidator.h
+  src/License.h
+  src/Utilities.h
 )
 
 set(UI_FILES
@@ -55,10 +59,20 @@ qt_add_executable(ArchiveSphynx
   ${RESOURCES}
 )
 
+target_compile_definitions(ArchiveSphynx PRIVATE APP_VERSION="${PROJECT_VERSION}")
 target_include_directories(ArchiveSphynx PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${LibArchive_INCLUDE_DIRS})
 target_link_libraries(ArchiveSphynx PRIVATE Qt6::Widgets Qt6::Core Qt6::Gui ${LibArchive_LIBRARIES})
 
 set_target_properties(ArchiveSphynx PROPERTIES
   MACOSX_BUNDLE TRUE
+  MACOSX_BUNDLE_ICON_FILE app_icon.icns
   WIN32_EXECUTABLE TRUE
 )
+
+set(APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../app_icon.icns")
+set_source_files_properties(${APP_ICON} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+target_sources(ArchiveSphynx PRIVATE ${APP_ICON})
+
+if(WIN32)
+  target_sources(ArchiveSphynx PRIVATE resources/app_icon.rc)
+endif()
