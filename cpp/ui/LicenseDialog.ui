@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>LicenseDialog</class>
+ <widget class="QDialog" name="LicenseDialog">
+  <property name="geometry">
+   <rect><x>0</x><y>0</y><width>400</width><height>160</height></rect>
+  </property>
+  <layout class="QFormLayout" name="formLayout">
+   <item row="0" column="0"><widget class="QLabel" name="label1"><property name="text"><string>User Name:</string></property></widget></item>
+   <item row="0" column="1"><widget class="QLineEdit" name="userNameEdit"/></item>
+   <item row="1" column="0"><widget class="QLabel" name="label2"><property name="text"><string>License Key:</string></property></widget></item>
+   <item row="1" column="1"><widget class="QLineEdit" name="licenseKeyEdit"><property name="placeholderText"><string>XXXX-XXXX-XXXX-XXXX</string></property></widget></item>
+   <item row="2" column="1">
+    <widget class="QDialogButtonBox" name="buttonBox">
+     <property name="standardButtons"><set>QDialogButtonBox::Ok|QDialogButtonBox::Cancel</set></property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections>
+  <connection>
+   <sender>buttonBox</sender><signal>accepted()</signal><receiver>LicenseDialog</receiver><slot>accept()</slot>
+  </connection>
+  <connection>
+   <sender>buttonBox</sender><signal>rejected()</signal><receiver>LicenseDialog</receiver><slot>reject()</slot>
+  </connection>
+ </connections>
+</ui>

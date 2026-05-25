@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SettingsDialog</class>
+ <widget class="QDialog" name="SettingsDialog">
+  <property name="geometry">
+   <rect><x>0</x><y>0</y><width>400</width><height>150</height></rect>
+  </property>
+  <layout class="QFormLayout" name="formLayout">
+   <item row="0" column="0"><widget class="QLabel" name="labelTheme"><property name="text"><string>Theme:</string></property></widget></item>
+   <item row="0" column="1"><widget class="QComboBox" name="themeCombo"/></item>
+   <item row="1" column="0"><widget class="QLabel" name="labelFontSize"><property name="text"><string>Font Size:</string></property></widget></item>
+   <item row="1" column="1"><widget class="QComboBox" name="fontSizeCombo"/></item>
+   <item row="2" column="0"><widget class="QLabel" name="labelBtnColor"><property name="text"><string>Button highlight color:</string></property></widget></item>
+   <item row="2" column="1"><widget class="QPushButton" name="btnColorPicker"><property name="text"><string>Choose…</string></property></widget></item>
+   <item row="3" column="0"><widget class="QLabel" name="labelTreeColor"><property name="text"><string>Tree selection color:</string></property></widget></item>
+   <item row="3" column="1"><widget class="QPushButton" name="treeColorPicker"><property name="text"><string>Choose…</string></property></widget></item>
+   <item row="4" column="1">
+    <widget class="QDialogButtonBox" name="buttonBox">
+     <property name="standardButtons"><set>QDialogButtonBox::Ok|QDialogButtonBox::Cancel</set></property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections>
+  <connection>
+   <sender>buttonBox</sender><signal>accepted()</signal><receiver>SettingsDialog</receiver><slot>accept()</slot>
+  </connection>
+  <connection>
+   <sender>buttonBox</sender><signal>rejected()</signal><receiver>SettingsDialog</receiver><slot>reject()</slot>
+  </connection>
+ </connections>
+</ui>
