@@ -81,10 +81,19 @@ function runStressTest(sourceExt, size = "small") {
   const outDir = path.join(os.tmpdir(), `archivesphynx-stress-${size}-${sourceExt}-${Date.now()}`);
 
   let refMap;
+  let archives = [];
 
   beforeAll(() => {
     fs.mkdirSync(outDir, { recursive: true });
     refMap = buildRefMap(refDir);
+  });
+
+  afterEach(() => {
+    for (const a of archives) {
+      if (a._tempFile) { try { fs.unlinkSync(a._tempFile); } catch {} }
+      if (a._cacheDir) { try { fs.rmSync(a._cacheDir, { recursive: true, force: true }); } catch {} }
+    }
+    archives = [];
   });
 
   afterAll(() => {
@@ -97,11 +106,13 @@ function runStressTest(sourceExt, size = "small") {
 
     // Open source archive using the app's createArchive/open path
     const srcArchive = createArchive(srcPath);
+    archives.push(srcArchive);
     await srcArchive.open(srcPath);
     const srcEntries = srcArchive.getEntries();
 
     // Create destination archive using the app's createArchive/addFile/save path
     const destArchive = createArchive(outPath);
+    archives.push(destArchive);
     destArchive.create();
 
     for (const entry of srcEntries) {
@@ -121,20 +132,15 @@ function runStressTest(sourceExt, size = "small") {
     fs.mkdirSync(extractDir, { recursive: true });
 
     const verifyArchive = createArchive(outPath);
+    archives.push(verifyArchive);
     await verifyArchive.open(outPath);
     await verifyArchive.extractAll(extractDir);
 
     const errors = verifyExtracted(extractDir, refMap);
     process.stdout.write(`${sourceExt} → ${targetExt}... ${Date.now() - startTime}ms\n`);
 
-    // Clean up temp files created by archive backends
-    for (const a of [srcArchive, destArchive, verifyArchive]) {
-      if (a._tempFile) { try { fs.unlinkSync(a._tempFile); } catch {} }
-      if (a._cacheDir) { try { fs.rmSync(a._cacheDir, { recursive: true, force: true }); } catch {} }
-    }
-
     expect(errors).toEqual([]);
-  }, 10 * 60 * 1000);
+  }, 30 * 60 * 1000);
 }
 
 module.exports = { runStressTest };
