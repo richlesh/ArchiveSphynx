@@ -35,20 +35,17 @@ jobs:
           arch: win64_msvc2022_64
           cache: true
 
-      - name: Install Qt6 ARM64 target
-        if: matrix.arch == 'arm64'
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: '6.8.*'
-          arch: win64_msvc2022_arm64_cross_compiled
-          cache: true
-          set-env: false
-
       - name: Install libarchive via vcpkg
         run: |
           vcpkg install libarchive:${{ matrix.arch == 'arm64' && 'arm64-windows' || 'x64-windows' }}
         env:
           VCPKG_DEFAULT_TRIPLET: ${{ matrix.arch == 'arm64' && 'arm64-windows' || 'x64-windows' }}
+
+      - name: Install Qt6 ARM64 via vcpkg
+        if: matrix.arch == 'arm64'
+        run: vcpkg install qt6:arm64-windows
+        env:
+          VCPKG_DEFAULT_TRIPLET: arm64-windows
 
       - name: Inject license salt
         run: |
@@ -67,23 +64,30 @@ jobs:
       - name: Configure and build
         run: |
           $cmakeArch = if ("${{ matrix.arch }}" -eq "arm64") { "ARM64" } else { "x64" }
-          $qtPath = if ("${{ matrix.arch }}" -eq "arm64") {
-            "$env:RUNNER_WORKSPACE/Qt/6.8.3/msvc2022_arm64_cross_compiled"
-          } else {
-            "$env:Qt6_DIR/.."
+          $cmakeArgs = @(
+            "-S", "cpp", "-B", "build",
+            "-G", "Visual Studio 17 2022", "-A", $cmakeArch,
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          )
+          if ("${{ matrix.arch }}" -eq "x64") {
+            $cmakeArgs += "-DCMAKE_PREFIX_PATH=$env:Qt6_DIR/.."
           }
-          cmake -S cpp -B build -G "Visual Studio 17 2022" -A $cmakeArch `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_PREFIX_PATH="$qtPath" `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          cmake @cmakeArgs
           cmake --build build --config Release
         shell: powershell
 
       - name: Deploy Qt dependencies
         run: |
           if ("${{ matrix.arch }}" -eq "arm64") {
-            $qtBin = "$env:RUNNER_WORKSPACE/Qt/6.8.3/msvc2022_arm64_cross_compiled/bin"
-            & "$env:Qt6_DIR/../bin/windeployqt.exe" --dir build/Release build/Release/ArchiveSphynx.exe --qtpaths "$qtBin/qtpaths.exe"
+            $windeployqt = Get-ChildItem -Path "$env:VCPKG_INSTALLATION_ROOT/installed/arm64-windows/tools/Qt6/bin/windeployqt*" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($windeployqt) {
+              & $windeployqt.FullName build/Release/ArchiveSphynx.exe
+            } else {
+              # Manually copy Qt DLLs from vcpkg
+              Copy-Item "$env:VCPKG_INSTALLATION_ROOT/installed/arm64-windows/bin/*.dll" build/Release/
+              Copy-Item "$env:VCPKG_INSTALLATION_ROOT/installed/arm64-windows/plugins" build/Release/ -Recurse -ErrorAction SilentlyContinue
+            }
           } else {
             windeployqt build/Release/ArchiveSphynx.exe
           }
