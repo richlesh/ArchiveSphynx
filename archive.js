@@ -488,7 +488,7 @@ class TarArchive {
     switch (this.compression) {
       case "gz": return zlib.gzipSync(buf);
       case "bz2":
-        return execFileSync(getBzip2Path(), ["-c"], { input: buf, maxBuffer: Infinity });
+        return execFileSync(getBzip2Path(), ["-3", "-c"], { input: buf, maxBuffer: Infinity });
       default: return buf;
     }
   }
@@ -632,7 +632,7 @@ class TarArchive {
       if (this.compression === "bz2") {
         const outFd = fs.openSync(filePath, "w");
         const ok = await new Promise((resolve, reject) => {
-          const proc = spawn(getBzip2Path(), ["-k", "-c", tempTar], { stdio: ["ignore", outFd, "pipe"] });
+          const proc = spawn(getBzip2Path(), ["-3", "-k", "-c", tempTar], { stdio: ["ignore", outFd, "pipe"] });
           proc.on("close", (code) => { fs.closeSync(outFd); resolve(code === 0); });
           proc.on("error", () => resolve(false));
         });
