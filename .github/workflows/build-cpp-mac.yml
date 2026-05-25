@@ -34,29 +34,15 @@ jobs:
           CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
           KEYCHAIN_PASSWORD=build-keychain-password
-
-          # Create keychain - newer macOS creates .keychain-db automatically
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/build.keychain
-
-          # Find the actual file created (could be .keychain or .keychain-db)
-          if [ -f "$RUNNER_TEMP/build.keychain-db" ]; then
-            KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
-          else
-            KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain"
-          fi
-          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> $GITHUB_ENV
-
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           echo "$CERTIFICATE_BASE64" | base64 --decode -o $RUNNER_TEMP/cert.p12
-          security import $RUNNER_TEMP/cert.p12 -k $KEYCHAIN_PATH -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign -A
+          security import $RUNNER_TEMP/cert.p12 -k $KEYCHAIN_PATH -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security list-keychain -d user -s $KEYCHAIN_PATH
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          echo "=== Identities in build keychain ==="
-          security find-identity -v $KEYCHAIN_PATH
-          echo "=== All identities ==="
-          security find-identity -v
 
       - name: Inject license salt
         run: |
