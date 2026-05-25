@@ -44,7 +44,7 @@ bool ArchiveManager::open(const QString &filePath) {
     e.isDirectory = (archive_entry_filetype(entry) == AE_IFDIR);
     e.isSymlink = (archive_entry_filetype(entry) == AE_IFLNK) || (archive_entry_symlink(entry) != nullptr);
     e.modified = QDateTime::fromSecsSinceEpoch(archive_entry_mtime(entry));
-    mode_t mode = archive_entry_perm(entry);
+    unsigned int mode = archive_entry_perm(entry);
     e.permissions = QString::asprintf("%o", mode);
 
     if (isZipLike) {
