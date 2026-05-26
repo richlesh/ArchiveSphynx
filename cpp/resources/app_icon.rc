@@ -1,1 +1,4 @@
-IDI_ICON1 ICON "..\\app_icon.ico"
+IDI_ICON1 ICON "..\\..\\app_icon.ico"
+IDI_ICON_7ZIP ICON "..\\..\\doc_icon_7zip.ico"
+IDI_ICON_ZIP ICON "..\\..\\doc_icon_zip.ico"
+IDI_ICON_TAR ICON "..\\..\\doc_icon_tar.ico"

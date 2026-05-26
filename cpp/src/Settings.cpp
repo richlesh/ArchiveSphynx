@@ -31,6 +31,10 @@ void Settings::load() {
     m_fontSize = obj.value("fontSize").toString();
   m_userName = obj.value("userName").toString();
   m_licenseKey = obj.value("licenseKey").toString();
+  if (obj.contains("windowWidth") && obj.contains("windowHeight"))
+    m_windowSize = QSize(obj.value("windowWidth").toInt(), obj.value("windowHeight").toInt());
+  if (obj.contains("headerState"))
+    m_headerState = QByteArray::fromBase64(obj.value("headerState").toString().toLatin1());
 }
 
 void Settings::save() {
@@ -41,6 +45,10 @@ void Settings::save() {
   obj["fontSize"] = m_fontSize;
   obj["userName"] = m_userName;
   obj["licenseKey"] = m_licenseKey;
+  obj["windowWidth"] = m_windowSize.width();
+  obj["windowHeight"] = m_windowSize.height();
+  if (!m_headerState.isEmpty())
+    obj["headerState"] = QString::fromLatin1(m_headerState.toBase64());
 
   QFile file(settingsFilePath());
   if (!file.open(QIODevice::WriteOnly)) return;
@@ -59,3 +67,7 @@ QString Settings::userName() const { return m_userName; }
 void Settings::setUserName(const QString &name) { m_userName = name; }
 QString Settings::licenseKey() const { return m_licenseKey; }
 void Settings::setLicenseKey(const QString &key) { m_licenseKey = key; }
+QSize Settings::windowSize() const { return m_windowSize; }
+void Settings::setWindowSize(const QSize &size) { m_windowSize = size; }
+QByteArray Settings::headerState() const { return m_headerState; }
+void Settings::setHeaderState(const QByteArray &state) { m_headerState = state; }

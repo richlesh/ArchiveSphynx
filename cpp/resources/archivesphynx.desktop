@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=ArchiveSphynx
+Comment=Archive Manager
+Exec=archivesphynx %F
+Icon=archivesphynx
+Terminal=false
+Type=Application
+Categories=Utility;Archiving;
+MimeType=application/zip;application/x-7z-compressed;application/x-tar;application/gzip;application/x-bzip2;application/x-xz;application/zstd;
