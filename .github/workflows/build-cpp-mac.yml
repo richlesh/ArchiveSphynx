@@ -90,14 +90,25 @@ jobs:
           VERSION=${{ steps.version.outputs.version }}
           IDENTITY="Developer ID Application: Richard Lesh (${APPLE_TEAM_ID})"
 
-          # Deploy Qt frameworks
-          "$MACDEPLOYQT" build/ArchiveSphynx.app
+          # Deploy Qt frameworks (skip plugins with unresolvable dependencies)
+          "$MACDEPLOYQT" build/ArchiveSphynx.app \
+            -always-overwrite \
+            -no-strip
 
-          # Sign all frameworks and the app with hardened runtime (required for notarization)
-          find build/ArchiveSphynx.app -name "*.dylib" -o -name "*.framework" | while read f; do
-            codesign --force --options runtime --sign "$IDENTITY" "$f"
+          # Remove plugins that reference unavailable Qt modules
+          rm -rf build/ArchiveSphynx.app/Contents/PlugIns/virtualkeyboard
+          rm -rf build/ArchiveSphynx.app/Contents/PlugIns/imageformats/libqpdf.dylib
+          rm -rf build/ArchiveSphynx.app/Contents/PlugIns/imageformats/libqsvg.dylib
+          rm -rf build/ArchiveSphynx.app/Contents/PlugIns/imageformats/libqwebp.dylib
+
+          # Sign all bundled libraries and frameworks with hardened runtime
+          find build/ArchiveSphynx.app/Contents/Frameworks -type f \( -name "*.dylib" -o -perm +111 \) | while read f; do
+            codesign --force --options runtime --sign "$IDENTITY" --timestamp "$f" 2>/dev/null || true
           done
-          codesign --force --deep --options runtime --sign "$IDENTITY" build/ArchiveSphynx.app
+          find build/ArchiveSphynx.app/Contents/PlugIns -type f -name "*.dylib" | while read f; do
+            codesign --force --options runtime --sign "$IDENTITY" --timestamp "$f" 2>/dev/null || true
+          done
+          codesign --force --deep --options runtime --sign "$IDENTITY" --timestamp build/ArchiveSphynx.app
 
           # Create DMG
           mkdir -p dist
