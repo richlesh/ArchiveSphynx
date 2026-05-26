@@ -424,6 +424,7 @@ void MainWindow::newArchive() {
   target->m_model = new QStandardItemModel(target);
   target->m_model->setHorizontalHeaderLabels({tr("Name"), tr("Size"), tr("Compressed"), tr("Method"), tr("Date Modified"), tr("Permissions")});
   connect(target->m_model, &QStandardItemModel::itemChanged, target, &MainWindow::onItemChanged);
+  connect(target->m_model, &QStandardItemModel::rowsInserted, target, &MainWindow::markDirty);
 
   auto *proxy = new QSortFilterProxyModel(target);
   proxy->setSourceModel(target->m_model);
@@ -624,6 +625,7 @@ void MainWindow::openArchiveFile(const QString &filePath) {
   // Enable internal drag-drop on the model
   m_model->setSortRole(Qt::DisplayRole);
   connect(m_model, &QStandardItemModel::itemChanged, this, &MainWindow::onItemChanged);
+  connect(m_model, &QStandardItemModel::rowsInserted, this, &MainWindow::markDirty);
 
   // Enable case-insensitive sorting via proxy
   auto *proxy = new QSortFilterProxyModel(this);
