@@ -86,6 +86,16 @@ jobs:
           echo "C:\Program Files (x86)\NSIS" >> $env:GITHUB_PATH
         shell: powershell
 
+      - name: Bundle MSVC runtime
+        run: |
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $redistDir = Get-ChildItem "$vsPath\VC\Redist\MSVC\*\${{ matrix.arch == 'arm64' && 'arm64' || 'x64' }}\Microsoft.VC*.CRT" -Directory | Select-Object -Last 1
+          Copy-Item "$redistDir\vcruntime140.dll" build/Release/
+          Copy-Item "$redistDir\vcruntime140_1.dll" build/Release/ -ErrorAction SilentlyContinue
+          Copy-Item "$redistDir\msvcp140.dll" build/Release/
+          Copy-Item "$redistDir\msvcp140_1.dll" build/Release/ -ErrorAction SilentlyContinue
+        shell: powershell
+
       - name: Create installer with NSIS
         run: |
           $version = "${{ steps.version.outputs.version }}"
