@@ -154,11 +154,11 @@ bool ArchiveManager::saveTo(const QString &destPath, const QList<ArchiveEntry> &
     archive_write_set_format_pax_restricted(a);
     if (ext == "gz" || ext == "tgz" || base.endsWith(".tar"))
       archive_write_add_filter_gzip(a);
-    else if (ext == "bz2")
+    else if (ext == "bz2" || ext == "tbz")
       archive_write_add_filter_bzip2(a);
-    else if (ext == "xz")
+    else if (ext == "xz" || ext == "txz")
       archive_write_add_filter_xz(a);
-    else if (ext == "zst")
+    else if (ext == "zst" || ext == "tzst")
       archive_write_add_filter_zstd(a);
     else
       archive_write_add_filter_none(a);
