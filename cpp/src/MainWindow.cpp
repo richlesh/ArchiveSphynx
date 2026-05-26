@@ -397,8 +397,8 @@ QStandardItem *MainWindow::selectedFolderItem() const {
 
 void MainWindow::addExternalFiles(const QStringList &paths, QStandardItem *parent) {
   if (!m_model) return;
-  QIcon fileIcon(":/icons/file_icon.png");
-  QIcon dirIcon(":/icons/folder_icon.png");
+  QIcon fileIcon = themedIcon(":/icons/file_icon.png");
+  QIcon dirIcon = themedIcon(":/icons/folder_icon.png");
 
   for (const QString &path : paths) {
     QFileInfo fi(path);
@@ -475,7 +475,7 @@ void MainWindow::openArchive() {
 
 void MainWindow::newFolder() {
   if (!m_model) return;
-  QIcon dirIcon(":/icons/folder_icon.png");
+  QIcon dirIcon = themedIcon(":/icons/folder_icon.png");
   QStandardItem *parent = selectedFolderItem();
 
   // Find unique name
@@ -578,9 +578,9 @@ void MainWindow::openArchiveFile(const QString &filePath) {
   m_model = new QStandardItemModel(this);
   m_model->setHorizontalHeaderLabels({tr("Name"), tr("Size"), tr("Date Modified"), tr("Permissions")});
 
-  QIcon dirIcon(":/icons/folder_icon.png");
-  QIcon fileIcon(":/icons/file_icon.png");
-  QIcon linkIcon(":/icons/symlink_icon.png");
+  QIcon dirIcon = themedIcon(":/icons/folder_icon.png");
+  QIcon fileIcon = themedIcon(":/icons/file_icon.png");
+  QIcon linkIcon = themedIcon(":/icons/symlink_icon.png");
 
   QHash<QString, QStandardItem *> dirItems;
 

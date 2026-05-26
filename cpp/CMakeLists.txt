@@ -75,10 +75,10 @@ set_target_properties(ArchiveSphynx PROPERTIES
   WIN32_EXECUTABLE TRUE
 )
 
-set(APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../app_icon.icns")
-set(DOC_ICON_7ZIP "${CMAKE_CURRENT_SOURCE_DIR}/../doc_icon_7zip.icns")
-set(DOC_ICON_ZIP "${CMAKE_CURRENT_SOURCE_DIR}/../doc_icon_zip.icns")
-set(DOC_ICON_TAR "${CMAKE_CURRENT_SOURCE_DIR}/../doc_icon_tar.icns")
+set(APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/app_icon.icns")
+set(DOC_ICON_7ZIP "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/doc_icon_7zip.icns")
+set(DOC_ICON_ZIP "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/doc_icon_zip.icns")
+set(DOC_ICON_TAR "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/doc_icon_tar.icns")
 set_source_files_properties(${APP_ICON} ${DOC_ICON_7ZIP} ${DOC_ICON_ZIP} ${DOC_ICON_TAR}
   PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
 target_sources(ArchiveSphynx PRIVATE ${APP_ICON} ${DOC_ICON_7ZIP} ${DOC_ICON_ZIP} ${DOC_ICON_TAR})
