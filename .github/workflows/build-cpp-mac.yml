@@ -37,6 +37,7 @@ jobs:
           fi
 
       - name: Import Developer ID certificate
+        id: cert
         env:
           CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -49,6 +50,11 @@ jobs:
           security import $RUNNER_TEMP/cert.p12 -k $RUNNER_TEMP/build.keychain -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security list-keychain -d user -s $RUNNER_TEMP/build.keychain
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/build.keychain
+
+          # Extract signing identity hash
+          IDENTITY_HASH=$(security find-identity -v -p codesigning $RUNNER_TEMP/build.keychain | head -1 | awk '{print $2}')
+          echo "hash=$IDENTITY_HASH" >> $GITHUB_OUTPUT
+          echo "Found identity: $IDENTITY_HASH"
 
       - name: Inject license salt
         run: |
@@ -80,6 +86,7 @@ jobs:
       - name: Deploy, sign, and create DMG
         env:
           APPLE_TEAM_ID: MMZ3Y97NTP
+          IDENTITY: ${{ steps.cert.outputs.hash }}
         run: |
           if [ "${{ matrix.arch }}" = "x64" ]; then
             MACDEPLOYQT="/usr/local/opt/qt@6/bin/macdeployqt"
@@ -88,7 +95,6 @@ jobs:
           fi
           ARCH=${{ matrix.arch }}
           VERSION=${{ steps.version.outputs.version }}
-          IDENTITY="Developer ID Application: Richard Lesh (${APPLE_TEAM_ID})"
 
           # Deploy Qt frameworks (skip plugins with unresolvable dependencies)
           "$MACDEPLOYQT" build/ArchiveSphynx.app \
