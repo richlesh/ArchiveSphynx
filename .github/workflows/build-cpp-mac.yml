@@ -27,7 +27,14 @@ jobs:
           TAG: ${{ github.event.inputs.tag }}
 
       - name: Install Qt6 and libarchive
-        run: brew install qt@6 libarchive cmake ninja
+        run: |
+          if [ "${{ matrix.arch }}" = "x64" ]; then
+            # Install x86_64 Homebrew and libraries for cross-compilation
+            arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            arch -x86_64 /usr/local/bin/brew install qt@6 libarchive cmake ninja
+          else
+            brew install qt@6 libarchive cmake ninja
+          fi
 
       - name: Import Developer ID certificate
         env:
@@ -56,11 +63,18 @@ jobs:
 
       - name: Configure and build
         run: |
+          if [ "${{ matrix.arch }}" = "x64" ]; then
+            QT_PREFIX="/usr/local/opt/qt@6"
+            ARCHIVE_PREFIX="/usr/local/opt/libarchive"
+          else
+            QT_PREFIX="$(brew --prefix qt@6)"
+            ARCHIVE_PREFIX="$(brew --prefix libarchive)"
+          fi
           CMAKE_ARCH=${{ matrix.arch == 'arm64' && 'arm64' || 'x86_64' }}
           cmake -S cpp -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES=${CMAKE_ARCH} \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6);$(brew --prefix libarchive)"
+            -DCMAKE_PREFIX_PATH="${QT_PREFIX};${ARCHIVE_PREFIX}"
           cmake --build build
 
       - name: Sign application
