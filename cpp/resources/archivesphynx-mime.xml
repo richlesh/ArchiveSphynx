@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-7z-compressed">
+    <icon name="archivesphynx-doc-7zip"/>
+  </mime-type>
+  <mime-type type="application/zip">
+    <icon name="archivesphynx-doc-zip"/>
+  </mime-type>
+  <mime-type type="application/x-tar">
+    <icon name="archivesphynx-doc-tar"/>
+  </mime-type>
+  <mime-type type="application/gzip">
+    <icon name="archivesphynx-doc-tar"/>
+  </mime-type>
+  <mime-type type="application/x-bzip2">
+    <icon name="archivesphynx-doc-tar"/>
+  </mime-type>
+  <mime-type type="application/x-xz">
+    <icon name="archivesphynx-doc-tar"/>
+  </mime-type>
+  <mime-type type="application/zstd">
+    <icon name="archivesphynx-doc-tar"/>
+  </mime-type>
+</mime-info>

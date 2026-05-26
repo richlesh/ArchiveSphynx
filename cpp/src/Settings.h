@@ -4,7 +4,9 @@
 #ifndef SETTINGS_H
 #define SETTINGS_H
 
+#include <QByteArray>
 #include <QColor>
+#include <QSize>
 #include <QString>
 
 class Settings {
@@ -26,6 +28,10 @@ public:
   void setUserName(const QString &name);
   QString licenseKey() const;
   void setLicenseKey(const QString &key);
+  QSize windowSize() const;
+  void setWindowSize(const QSize &size);
+  QByteArray headerState() const;
+  void setHeaderState(const QByteArray &state);
 
 private:
   QString settingsFilePath() const;
@@ -36,6 +42,8 @@ private:
   QString m_fontSize{"Medium"};
   QString m_userName;
   QString m_licenseKey;
+  QSize m_windowSize{1350, 600};
+  QByteArray m_headerState;
 };
 
 #endif // SETTINGS_H

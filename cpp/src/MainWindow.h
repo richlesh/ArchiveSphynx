@@ -69,6 +69,8 @@ private:
   bool m_licensed;
   bool m_dirty = false;
   bool m_renaming = false;
+  bool m_saving = false;
+  bool m_cancelSave = false;
   ArchiveManager *m_archiveManager = nullptr;
   QStandardItemModel *m_model = nullptr;
   QSortFilterProxyModel *m_proxy = nullptr;
