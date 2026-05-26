@@ -5,6 +5,9 @@
 
 #include <QPainter>
 #include <QPainterPath>
+#include <QPalette>
+#include <QApplication>
+#include <QImage>
 
 QPixmap roundedPixmap(const QPixmap &src, int radius) {
   QPixmap result(src.size());
@@ -16,4 +19,15 @@ QPixmap roundedPixmap(const QPixmap &src, int radius) {
   p.setClipPath(path);
   p.drawPixmap(0, 0, src);
   return result;
+}
+
+QIcon themedIcon(const QString &path) {
+  QPixmap px(path);
+  bool dark = qApp->palette().window().color().lightness() < 128;
+  if (dark) {
+    QImage img = px.toImage();
+    img.invertPixels(QImage::InvertRgb);
+    px = QPixmap::fromImage(img);
+  }
+  return QIcon(px);
 }

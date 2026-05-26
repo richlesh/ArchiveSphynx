@@ -4,8 +4,10 @@
 #ifndef UTILITIES_H
 #define UTILITIES_H
 
+#include <QIcon>
 #include <QPixmap>
 
 QPixmap roundedPixmap(const QPixmap &src, int radius);
+QIcon themedIcon(const QString &path);
 
 #endif // UTILITIES_H
