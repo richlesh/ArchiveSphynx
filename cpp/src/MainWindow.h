@@ -11,7 +11,7 @@ class SettingsDialog;
 class LicenseDialog;
 class AboutDialog;
 class ArchiveManager;
-class QProgressBar;
+class BouncingProgressBar;
 class QToolBar;
 class QAction;
 class QLabel;
@@ -72,7 +72,7 @@ private:
   ArchiveManager *m_archiveManager = nullptr;
   QStandardItemModel *m_model = nullptr;
   QSortFilterProxyModel *m_proxy = nullptr;
-  QProgressBar *m_progressBar = nullptr;
+  BouncingProgressBar *m_progressBar = nullptr;
   QToolBar *m_toolbar = nullptr;
   QLabel *m_pathBar = nullptr;
   bool m_altPressed = false;
@@ -87,6 +87,16 @@ private:
   QAction *m_actExtract = nullptr;
   QAction *m_actTest = nullptr;
   QAction *m_actClean = nullptr;
+
+  // Menu-only actions (no emoji)
+  QAction *m_menuSave = nullptr;
+  QAction *m_menuSaveAs = nullptr;
+  QAction *m_menuAdd = nullptr;
+  QAction *m_menuNewFolder = nullptr;
+  QAction *m_menuDelete = nullptr;
+  QAction *m_menuExtract = nullptr;
+  QAction *m_menuTest = nullptr;
+  QAction *m_menuClean = nullptr;
 
   SettingsDialog *m_settingsDialog = nullptr;
   LicenseDialog *m_licenseDialog = nullptr;
