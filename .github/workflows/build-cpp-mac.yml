@@ -9,7 +9,7 @@ on:
 
 jobs:
   build-cpp-mac:
-    runs-on: macos-13
+    runs-on: macos-latest
     permissions:
       contents: write
     strategy:
@@ -34,15 +34,14 @@ jobs:
           CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
-          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
           KEYCHAIN_PASSWORD=build-keychain-password
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/build.keychain
+          security set-keychain-settings -lut 21600 $RUNNER_TEMP/build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/build.keychain
           echo "$CERTIFICATE_BASE64" | base64 --decode -o $RUNNER_TEMP/cert.p12
-          security import $RUNNER_TEMP/cert.p12 -k $KEYCHAIN_PATH -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security list-keychain -d user -s $KEYCHAIN_PATH
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security import $RUNNER_TEMP/cert.p12 -k $RUNNER_TEMP/build.keychain -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security list-keychain -d user -s $RUNNER_TEMP/build.keychain
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/build.keychain
 
       - name: Inject license salt
         run: |
@@ -67,9 +66,9 @@ jobs:
       - name: Sign application
         env:
           APPLE_TEAM_ID: MMZ3Y97NTP
+          CSC_KEYCHAIN: ${{ runner.temp }}/build.keychain
         run: |
           codesign --force --deep --options runtime \
-            --keychain "$RUNNER_TEMP/build.keychain" \
             --sign "Developer ID Application: Richard Lesh (${APPLE_TEAM_ID})" \
             build/ArchiveSphynx.app
 
@@ -88,7 +87,6 @@ jobs:
           APPLE_TEAM_ID: MMZ3Y97NTP
         run: |
           codesign --force \
-            --keychain "$RUNNER_TEMP/build.keychain" \
             --sign "Developer ID Application: Richard Lesh (${APPLE_TEAM_ID})" \
             dist/*.dmg
 
