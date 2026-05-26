@@ -40,6 +40,8 @@
 #include <archive.h>
 #include <archive_entry.h>
 
+static constexpr qint64 kIOBufferSize = 1048576; // 1 MB
+
 static void setExpandedRecursive(QTreeView *tree, const QModelIndex &index, bool expand) {
   tree->setExpanded(index, expand);
   int rows = tree->model()->rowCount(index);
@@ -408,7 +410,8 @@ void MainWindow::addExternalFiles(const QStringList &paths, QStandardItem *paren
 
 void MainWindow::newArchive() {
   QString filter = tr("ZIP Archive (*.zip);;7-Zip Archive (*.7z);;Tar Archive (*.tar);;"
-                      "Tar+Gzip (*.tar.gz *.tgz);;Tar+Bzip2 (*.tar.bz2 *.tbz);;Tar+XZ (*.tar.xz *.txz);;Tar+Zstd (*.tar.zst *.tzst)");
+                      "Tar+Gzip (*.tgz);;Tar+Bzip2 (*.tbz);;"
+                      "Tar+XZ (*.txz);;Tar+Zstd (*.tzst)");
   QString file = QFileDialog::getSaveFileName(this, tr("New Archive"), QString(), filter);
   if (file.isEmpty()) return;
 
@@ -626,6 +629,7 @@ void MainWindow::openArchiveFile(const QString &filePath) {
   m_model->setSortRole(Qt::DisplayRole);
   connect(m_model, &QStandardItemModel::itemChanged, this, &MainWindow::onItemChanged);
   connect(m_model, &QStandardItemModel::rowsInserted, this, &MainWindow::markDirty);
+  connect(m_model, &QStandardItemModel::rowsRemoved, this, &MainWindow::markDirty);
 
   // Enable case-insensitive sorting via proxy
   auto *proxy = new QSortFilterProxyModel(this);
@@ -755,9 +759,9 @@ void MainWindow::saveArchive() {
     archive_write_set_format_pax_restricted(dst);
     QString base = fi.completeBaseName().toLower();
     if (ext == "gz" || ext == "tgz" || base.endsWith(".tar")) archive_write_add_filter_gzip(dst);
-    else if (ext == "bz2") archive_write_add_filter_bzip2(dst);
-    else if (ext == "xz") archive_write_add_filter_xz(dst);
-    else if (ext == "zst") archive_write_add_filter_zstd(dst);
+    else if (ext == "bz2" || ext == "tbz") archive_write_add_filter_bzip2(dst);
+    else if (ext == "xz" || ext == "txz") archive_write_add_filter_xz(dst);
+    else if (ext == "zst" || ext == "tzst") archive_write_add_filter_zstd(dst);
     else archive_write_add_filter_none(dst);
   }
 
@@ -771,9 +775,19 @@ void MainWindow::saveArchive() {
   }
 
   QSet<QString> written;
-  int saveTotal = pathList.size();
-  int saveProgress = 0;
+  qint64 totalBytes = 0;
+  for (const QString &path : pathList) {
+    if (path.endsWith('/')) continue;
+    if (diskSources.contains(path))
+      totalBytes += QFileInfo(diskSources[path]).size();
+    else {
+      for (const auto &e : m_archiveManager->entries())
+        if (e.path == path || origToNew.value(e.path) == path) { totalBytes += e.size; break; }
+    }
+  }
+  qint64 bytesWritten = 0;
   m_progressBar->setVisible(true);
+  m_progressBar->setRange(0, 100);
   m_progressBar->setValue(0);
 
   // Copy entries from backup that still exist in tree
@@ -811,20 +825,30 @@ void MainWindow::saveArchive() {
         archive_entry_set_pathname(entry, writePath.toUtf8().constData());
         // Buffer data first so we can set correct size (needed for tar)
         QByteArray data;
-        char buf[8192];
+        QByteArray readBuf(kIOBufferSize, Qt::Uninitialized);
         la_ssize_t len;
-        while ((len = archive_read_data(src, buf, sizeof(buf))) > 0) {
-          data.append(buf, len);
+        while ((len = archive_read_data(src, readBuf.data(), readBuf.size())) > 0) {
+          data.append(readBuf.constData(), len);
           QApplication::processEvents();
         }
         archive_entry_set_size(entry, data.size());
         archive_write_header(dst, entry);
-        if (!data.isEmpty())
-          archive_write_data(dst, data.constData(), data.size());
+        if (!data.isEmpty()) {
+          const char *ptr = data.constData();
+          qint64 remaining = data.size();
+          while (remaining > 0) {
+            qint64 chunk = qMin(remaining, kIOBufferSize);
+            archive_write_data(dst, ptr, chunk);
+            ptr += chunk;
+            remaining -= chunk;
+            bytesWritten += chunk;
+            if (totalBytes > 0)
+              m_progressBar->setValue(static_cast<int>(bytesWritten * 100 / totalBytes));
+            QApplication::processEvents();
+          }
+        }
         archive_write_finish_entry(dst);
         written.insert(writePath);
-        saveProgress++;
-        m_progressBar->setValue(saveProgress * 100 / qMax(saveTotal, 1));
         QApplication::processEvents();
       } else {
         archive_read_data_skip(src);
@@ -871,14 +895,18 @@ void MainWindow::saveArchive() {
     if (!isDir && diskSources.contains(cleanPath)) {
       QFile f(diskSources[cleanPath]);
       if (f.open(QIODevice::ReadOnly)) {
-        char buf[8192]; qint64 len;
-        while ((len = f.read(buf, sizeof(buf))) > 0)
-          archive_write_data(dst, buf, len);
+        QByteArray buf(kIOBufferSize, Qt::Uninitialized);
+        qint64 len;
+        while ((len = f.read(buf.data(), buf.size())) > 0) {
+          archive_write_data(dst, buf.constData(), len);
+          bytesWritten += len;
+          if (totalBytes > 0)
+            m_progressBar->setValue(static_cast<int>(bytesWritten * 100 / totalBytes));
+          QApplication::processEvents();
+        }
       }
     }
     archive_entry_free(entry);
-    saveProgress++;
-    m_progressBar->setValue(saveProgress * 100 / qMax(saveTotal, 1));
     QApplication::processEvents();
   }
 
@@ -911,7 +939,8 @@ void MainWindow::saveArchiveAs() {
   QString defaultDir = orig.absolutePath();
 
   QString filter = tr("ZIP Archive (*.zip);;7-Zip Archive (*.7z);;Tar Archive (*.tar);;"
-                      "Tar+Gzip (*.tar.gz *.tgz);;Tar+Bzip2 (*.tar.bz2 *.tbz);;Tar+XZ (*.tar.xz *.txz);;Tar+Zstd (*.tar.zst *.tzst)");
+                      "Tar+Gzip (*.tgz);;Tar+Bzip2 (*.tbz);;"
+                      "Tar+XZ (*.txz);;Tar+Zstd (*.tzst)");
   QString selectedFilter;
   QString file = QFileDialog::getSaveFileName(this, tr("Save Archive As"),
     defaultDir + "/" + baseName, filter, &selectedFilter);
@@ -949,9 +978,9 @@ void MainWindow::saveArchiveAs() {
     archive_write_set_format_pax_restricted(dst);
     QString cbase = fi.completeBaseName().toLower();
     if (ext == "gz" || ext == "tgz" || cbase.endsWith(".tar")) archive_write_add_filter_gzip(dst);
-    else if (ext == "bz2") archive_write_add_filter_bzip2(dst);
-    else if (ext == "xz") archive_write_add_filter_xz(dst);
-    else if (ext == "zst") archive_write_add_filter_zstd(dst);
+    else if (ext == "bz2" || ext == "tbz") archive_write_add_filter_bzip2(dst);
+    else if (ext == "xz" || ext == "txz") archive_write_add_filter_xz(dst);
+    else if (ext == "zst" || ext == "tzst") archive_write_add_filter_zstd(dst);
     else archive_write_add_filter_none(dst);
   }
 
@@ -964,9 +993,19 @@ void MainWindow::saveArchiveAs() {
   }
 
   QSet<QString> written;
-  int saveTotal = pathList.size();
-  int saveProgress = 0;
+  qint64 totalBytes = 0;
+  for (const QString &path : pathList) {
+    if (path.endsWith('/')) continue;
+    if (diskSources.contains(path))
+      totalBytes += QFileInfo(diskSources[path]).size();
+    else {
+      for (const auto &e : m_archiveManager->entries())
+        if (e.path == path || origToNew.value(e.path) == path) { totalBytes += e.size; break; }
+    }
+  }
+  qint64 bytesWritten = 0;
   m_progressBar->setVisible(true);
+  m_progressBar->setRange(0, 100);
   m_progressBar->setValue(0);
 
   if (archive_read_open_filename(src, backupPath.toUtf8().constData(), 10240) == ARCHIVE_OK) {
@@ -998,20 +1037,30 @@ void MainWindow::saveArchiveAs() {
         archive_entry_set_pathname(entry, writePath.toUtf8().constData());
         // Buffer data first so we can set correct size (needed for tar)
         QByteArray data;
-        char cbuf[8192];
+        QByteArray cReadBuf(kIOBufferSize, Qt::Uninitialized);
         la_ssize_t clen;
-        while ((clen = archive_read_data(src, cbuf, sizeof(cbuf))) > 0) {
-          data.append(cbuf, clen);
+        while ((clen = archive_read_data(src, cReadBuf.data(), cReadBuf.size())) > 0) {
+          data.append(cReadBuf.constData(), clen);
           QApplication::processEvents();
         }
         archive_entry_set_size(entry, data.size());
         archive_write_header(dst, entry);
-        if (!data.isEmpty())
-          archive_write_data(dst, data.constData(), data.size());
+        if (!data.isEmpty()) {
+          const char *ptr = data.constData();
+          qint64 remaining = data.size();
+          while (remaining > 0) {
+            qint64 chunk = qMin(remaining, kIOBufferSize);
+            archive_write_data(dst, ptr, chunk);
+            ptr += chunk;
+            remaining -= chunk;
+            bytesWritten += chunk;
+            if (totalBytes > 0)
+              m_progressBar->setValue(static_cast<int>(bytesWritten * 100 / totalBytes));
+            QApplication::processEvents();
+          }
+        }
         archive_write_finish_entry(dst);
         written.insert(writePath);
-        saveProgress++;
-        m_progressBar->setValue(saveProgress * 100 / qMax(saveTotal, 1));
         QApplication::processEvents();
       } else {
         archive_read_data_skip(src);
@@ -1044,14 +1093,18 @@ void MainWindow::saveArchiveAs() {
     if (!isDir && diskSources.contains(cleanPath)) {
       QFile file(diskSources[cleanPath]);
       if (file.open(QIODevice::ReadOnly)) {
-        char buf[8192]; qint64 len;
-        while ((len = file.read(buf, sizeof(buf))) > 0)
-          archive_write_data(dst, buf, len);
+        QByteArray buf(kIOBufferSize, Qt::Uninitialized);
+        qint64 len;
+        while ((len = file.read(buf.data(), buf.size())) > 0) {
+          archive_write_data(dst, buf.constData(), len);
+          bytesWritten += len;
+          if (totalBytes > 0)
+            m_progressBar->setValue(static_cast<int>(bytesWritten * 100 / totalBytes));
+          QApplication::processEvents();
+        }
       }
     }
     archive_entry_free(entry);
-    saveProgress++;
-    m_progressBar->setValue(saveProgress * 100 / qMax(saveTotal, 1));
     QApplication::processEvents();
   }
 
