@@ -16,7 +16,7 @@
 #include <QDragMoveEvent>
 #include <QDropEvent>
 #include <QMimeData>
-#include <QProgressBar>
+#include "BouncingProgressBar.h"
 #include <QStandardItemModel>
 #include <QSortFilterProxyModel>
 #include <QSet>
@@ -79,7 +79,7 @@ MainWindow::MainWindow(Settings &settings, bool licensed, QWidget *parent)
   m_pathBar->setTextInteractionFlags(Qt::TextSelectableByMouse);
   ui->mainLayout->insertWidget(0, m_pathBar);
 
-  m_progressBar = new QProgressBar(this);
+  m_progressBar = new BouncingProgressBar(this);
   m_progressBar->setMaximumWidth(200);
   m_progressBar->setVisible(false);
   ui->statusBar->addPermanentWidget(m_progressBar);
@@ -155,24 +155,17 @@ void MainWindow::setupMenus() {
   auto *fileMenu = menuBar()->addMenu(tr("&File"));
   fileMenu->addAction(tr("&New Archive"), QKeySequence::New, this, &MainWindow::newArchive);
   fileMenu->addAction(tr("&Open Archive…"), QKeySequence::Open, this, &MainWindow::openArchive);
-  fileMenu->addAction(m_actSave);
-  m_actSave->setShortcut(QKeySequence::Save);
-  fileMenu->addAction(m_actSaveAs);
-  m_actSaveAs->setShortcut(QKeySequence(tr("Ctrl+Shift+S")));
+  m_menuSave = fileMenu->addAction(tr("&Save"), QKeySequence::Save, this, &MainWindow::saveArchive);
+  m_menuSaveAs = fileMenu->addAction(tr("Save &As…"), QKeySequence(tr("Ctrl+Shift+S")), this, &MainWindow::saveArchiveAs);
   fileMenu->addSeparator();
-  fileMenu->addAction(m_actAdd);
-  m_actAdd->setShortcut(QKeySequence(tr("Ctrl+Shift+A")));
-  fileMenu->addAction(m_actNewFolder);
-  m_actNewFolder->setShortcut(QKeySequence(tr("Ctrl+Shift+N")));
-  fileMenu->addAction(m_actDelete);
-  m_actDelete->setShortcut(QKeySequence::Delete);
+  m_menuAdd = fileMenu->addAction(tr("Add Files…"), QKeySequence(tr("Ctrl+Shift+A")), this, &MainWindow::addFiles);
+  m_menuNewFolder = fileMenu->addAction(tr("New Folder"), QKeySequence(tr("Ctrl+Shift+N")), this, &MainWindow::newFolder);
+  m_menuDelete = fileMenu->addAction(tr("Delete"), QKeySequence::Delete, this, &MainWindow::deleteSelected);
   fileMenu->addSeparator();
-  fileMenu->addAction(m_actExtract);
-  m_actExtract->setShortcut(QKeySequence(tr("Ctrl+E")));
+  m_menuExtract = fileMenu->addAction(tr("Extract All"), QKeySequence(tr("Ctrl+E")), this, &MainWindow::extractArchive);
   fileMenu->addSeparator();
-  fileMenu->addAction(m_actTest);
-  m_actTest->setShortcut(QKeySequence(tr("Ctrl+T")));
-  fileMenu->addAction(m_actClean);
+  m_menuTest = fileMenu->addAction(tr("Test Integrity"), QKeySequence(tr("Ctrl+T")), this, &MainWindow::testIntegrity);
+  m_menuClean = fileMenu->addAction(tr("Clean macOS"), this, &MainWindow::cleanMacOS);
   fileMenu->addSeparator();
   fileMenu->addAction(tr("E&xit"), QKeySequence::Quit, this, &QWidget::close);
 
@@ -200,6 +193,16 @@ void MainWindow::updateActions() {
   m_actExtract->setText(hasSelection ? tr("📥 Extract Selected") : tr("📥 Extract All"));
   m_actTest->setEnabled(hasArchive);
   m_actClean->setEnabled(hasArchive && !readOnly);
+
+  m_menuSave->setEnabled(hasArchive && !readOnly && m_dirty);
+  m_menuSaveAs->setEnabled(hasArchive);
+  m_menuAdd->setEnabled(hasArchive && !readOnly);
+  m_menuNewFolder->setEnabled(hasArchive && !readOnly);
+  m_menuDelete->setEnabled(hasArchive && hasSelection && !readOnly);
+  m_menuExtract->setEnabled(hasArchive);
+  m_menuExtract->setText(hasSelection ? tr("Extract Selected") : tr("Extract All"));
+  m_menuTest->setEnabled(hasArchive);
+  m_menuClean->setEnabled(hasArchive && !readOnly);
 }
 
 void MainWindow::markDirty() {
@@ -231,6 +234,7 @@ void MainWindow::applyColors() {
 
 void MainWindow::applyTheme() {
   QString theme = m_settings.theme();
+  QColor highlight = m_settings.treeSelectionColor();
   if (theme == "Dark") {
     qApp->setStyle(QStyleFactory::create("Fusion"));
     QPalette p;
@@ -242,7 +246,7 @@ void MainWindow::applyTheme() {
     p.setColor(QPalette::Button, QColor("#3c3c3c"));
     p.setColor(QPalette::ButtonText, QColor("#e0e0e0"));
     p.setColor(QPalette::BrightText, QColor("#ffffff"));
-    p.setColor(QPalette::Highlight, QColor("#555555"));
+    p.setColor(QPalette::Highlight, highlight);
     p.setColor(QPalette::HighlightedText, QColor("#ffffff"));
     p.setColor(QPalette::ToolTipBase, QColor("#3c3c3c"));
     p.setColor(QPalette::ToolTipText, QColor("#e0e0e0"));
@@ -258,7 +262,7 @@ void MainWindow::applyTheme() {
     p.setColor(QPalette::Text, QColor("#1a1a1a"));
     p.setColor(QPalette::Button, QColor("#e8e8e8"));
     p.setColor(QPalette::ButtonText, QColor("#1a1a1a"));
-    p.setColor(QPalette::Highlight, QColor("#3399ff"));
+    p.setColor(QPalette::Highlight, highlight);
     p.setColor(QPalette::HighlightedText, QColor("#ffffff"));
     qApp->setPalette(p);
     qApp->setStyleSheet(QString());
@@ -404,7 +408,7 @@ void MainWindow::addExternalFiles(const QStringList &paths, QStandardItem *paren
 
 void MainWindow::newArchive() {
   QString filter = tr("ZIP Archive (*.zip);;7-Zip Archive (*.7z);;Tar Archive (*.tar);;"
-                      "Tar+Gzip (*.tar.gz);;Tar+Bzip2 (*.tar.bz2);;Tar+XZ (*.tar.xz);;Tar+Zstd (*.tar.zst)");
+                      "Tar+Gzip (*.tar.gz *.tgz);;Tar+Bzip2 (*.tar.bz2 *.tbz);;Tar+XZ (*.tar.xz *.txz);;Tar+Zstd (*.tar.zst *.tzst)");
   QString file = QFileDialog::getSaveFileName(this, tr("New Archive"), QString(), filter);
   if (file.isEmpty()) return;
 
@@ -438,7 +442,7 @@ void MainWindow::newArchive() {
 
 void MainWindow::openArchive() {
   QString file = QFileDialog::getOpenFileName(this, tr("Open Archive"), QString(),
-    tr("Archives (*.zip *.7z *.rar *.jar *.tar *.tar.gz *.tar.bz2 *.tar.xz *.tar.zst *.deb *.rpm *.dmg *.iso);;All Files (*)"));
+    tr("Archives (*.zip *.7z *.rar *.jar *.tar *.tar.gz *.tgz *.tar.bz2 *.tbz *.tar.xz *.txz *.tar.zst *.tzst *.deb *.rpm *.dmg *.iso);;All Files (*)"));
   if (!file.isEmpty())
     openArchiveFile(file);
 }
@@ -679,7 +683,8 @@ void MainWindow::onItemChanged(QStandardItem *item) {
 }
 
 static void collectPaths(QStandardItem *parent, const QString &prefix,
-                         QStringList &allPaths, QHash<QString, QString> &diskSources) {
+                         QStringList &allPaths, QHash<QString, QString> &diskSources,
+                         QHash<QString, QString> *origToNew = nullptr) {
   int rows = parent ? parent->rowCount() : 0;
   for (int i = 0; i < rows; ++i) {
     QStandardItem *nameItem = parent->child(i, 0);
@@ -691,13 +696,21 @@ static void collectPaths(QStandardItem *parent, const QString &prefix,
 
     if (isDir) {
       allPaths << path + "/";
-      collectPaths(nameItem, path, allPaths, diskSources);
+      if (origToNew) {
+        QVariant orig = nameItem->data(Qt::UserRole + 2);
+        if (orig.isValid()) origToNew->insert(orig.toString(), path + "/");
+      }
+      collectPaths(nameItem, path, allPaths, diskSources, origToNew);
     } else {
       allPaths << path;
       // Check for disk source
       QVariant src = nameItem->data(Qt::UserRole + 1);
       if (src.isValid())
         diskSources[path] = src.toString();
+      if (origToNew) {
+        QVariant orig = nameItem->data(Qt::UserRole + 2);
+        if (orig.isValid()) origToNew->insert(orig.toString(), path);
+      }
     }
   }
 }
@@ -709,7 +722,8 @@ void MainWindow::saveArchive() {
 
   QStringList pathList;
   QHash<QString, QString> diskSources;
-  collectPaths(m_model->invisibleRootItem(), QString(), pathList, diskSources);
+  QHash<QString, QString> origToNew;
+  collectPaths(m_model->invisibleRootItem(), QString(), pathList, diskSources, &origToNew);
   QSet<QString> allPaths(pathList.begin(), pathList.end());
 
   QString origPath = m_archiveManager->currentFile();
@@ -775,11 +789,24 @@ void MainWindow::saveArchive() {
       QString withoutSlash = normalized.endsWith('/') ? normalized.chopped(1) : normalized;
       bool keep = allPaths.contains(normalized) || allPaths.contains(withSlash) || allPaths.contains(withoutSlash);
 
+      // Check if this entry was moved/renamed (original path maps to a new path)
+      QString writePath = normalized;
+      if (!keep && origToNew.contains(normalized)) {
+        writePath = origToNew[normalized];
+        keep = true;
+      } else if (!keep && origToNew.contains(withSlash)) {
+        writePath = origToNew[withSlash];
+        keep = true;
+      } else if (!keep && origToNew.contains(withoutSlash)) {
+        writePath = origToNew[withoutSlash];
+        keep = true;
+      }
+
       // Don't copy if we have a new disk source for this path
-      if (keep && !diskSources.contains(withoutSlash)) {
-        // Write with normalized path (without ./)
-        if (entryPath != normalized)
-          archive_entry_set_pathname(entry, normalized.toUtf8().constData());
+      QString writeWithoutSlash = writePath.endsWith('/') ? writePath.chopped(1) : writePath;
+      if (keep && !diskSources.contains(writeWithoutSlash)) {
+        // Write with the (possibly renamed) path
+        archive_entry_set_pathname(entry, writePath.toUtf8().constData());
         // Buffer data first so we can set correct size (needed for tar)
         QByteArray data;
         char buf[8192];
@@ -793,7 +820,7 @@ void MainWindow::saveArchive() {
         if (!data.isEmpty())
           archive_write_data(dst, data.constData(), data.size());
         archive_write_finish_entry(dst);
-        written.insert(normalized);
+        written.insert(writePath);
         saveProgress++;
         m_progressBar->setValue(saveProgress * 100 / qMax(saveTotal, 1));
         QApplication::processEvents();
@@ -882,7 +909,7 @@ void MainWindow::saveArchiveAs() {
   QString defaultDir = orig.absolutePath();
 
   QString filter = tr("ZIP Archive (*.zip);;7-Zip Archive (*.7z);;Tar Archive (*.tar);;"
-                      "Tar+Gzip (*.tar.gz);;Tar+Bzip2 (*.tar.bz2);;Tar+XZ (*.tar.xz);;Tar+Zstd (*.tar.zst)");
+                      "Tar+Gzip (*.tar.gz *.tgz);;Tar+Bzip2 (*.tar.bz2 *.tbz);;Tar+XZ (*.tar.xz *.txz);;Tar+Zstd (*.tar.zst *.tzst)");
   QString selectedFilter;
   QString file = QFileDialog::getSaveFileName(this, tr("Save Archive As"),
     defaultDir + "/" + baseName, filter, &selectedFilter);
@@ -892,7 +919,8 @@ void MainWindow::saveArchiveAs() {
 
   QStringList pathList;
   QHash<QString, QString> diskSources;
-  collectPaths(m_model->invisibleRootItem(), QString(), pathList, diskSources);
+  QHash<QString, QString> origToNew;
+  collectPaths(m_model->invisibleRootItem(), QString(), pathList, diskSources, &origToNew);
   QSet<QString> allPaths(pathList.begin(), pathList.end());
 
   QString origArchive = m_archiveManager->currentFile();
@@ -946,12 +974,26 @@ void MainWindow::saveArchiveAs() {
       QString normalized = entryPath;
       if (normalized.startsWith("./")) normalized = normalized.mid(2);
 
-      bool keep = allPaths.contains(normalized) || allPaths.contains(entryPath);
-      QString cleanPath = normalized.endsWith('/') ? normalized.chopped(1) : normalized;
+      QString withSlash = normalized.endsWith('/') ? normalized : normalized + "/";
+      QString withoutSlash = normalized.endsWith('/') ? normalized.chopped(1) : normalized;
+      bool keep = allPaths.contains(normalized) || allPaths.contains(withSlash) || allPaths.contains(withoutSlash);
 
-      if (keep && !diskSources.contains(cleanPath)) {
-        if (entryPath != normalized)
-          archive_entry_set_pathname(entry, normalized.toUtf8().constData());
+      // Check if this entry was moved/renamed
+      QString writePath = normalized;
+      if (!keep && origToNew.contains(normalized)) {
+        writePath = origToNew[normalized];
+        keep = true;
+      } else if (!keep && origToNew.contains(withSlash)) {
+        writePath = origToNew[withSlash];
+        keep = true;
+      } else if (!keep && origToNew.contains(withoutSlash)) {
+        writePath = origToNew[withoutSlash];
+        keep = true;
+      }
+
+      QString writeWithoutSlash = writePath.endsWith('/') ? writePath.chopped(1) : writePath;
+      if (keep && !diskSources.contains(writeWithoutSlash)) {
+        archive_entry_set_pathname(entry, writePath.toUtf8().constData());
         // Buffer data first so we can set correct size (needed for tar)
         QByteArray data;
         char cbuf[8192];
@@ -965,7 +1007,7 @@ void MainWindow::saveArchiveAs() {
         if (!data.isEmpty())
           archive_write_data(dst, data.constData(), data.size());
         archive_write_finish_entry(dst);
-        written.insert(normalized);
+        written.insert(writePath);
         saveProgress++;
         m_progressBar->setValue(saveProgress * 100 / qMax(saveTotal, 1));
         QApplication::processEvents();

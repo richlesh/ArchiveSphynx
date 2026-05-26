@@ -17,6 +17,7 @@ find_package(LibArchive REQUIRED)
 set(SOURCES
   src/main.cpp
   src/MainWindow.cpp
+  src/BouncingProgressBar.cpp
   src/SettingsDialog.cpp
   src/LicenseDialog.cpp
   src/SplashScreen.cpp
@@ -30,6 +31,7 @@ set(SOURCES
 
 set(HEADERS
   src/MainWindow.h
+  src/BouncingProgressBar.h
   src/SettingsDialog.h
   src/LicenseDialog.h
   src/SplashScreen.h
