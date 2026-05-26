@@ -72,13 +72,12 @@ jobs:
         if: matrix.arch == 'arm64'
         run: |
           # windeployqt from cross-compiled Qt can't run on x64, copy DLLs manually
-          $qtBin = "$env:Qt6_DIR/../../bin"
-          Copy-Item "$qtBin/Qt6Core.dll" build/Release/
-          Copy-Item "$qtBin/Qt6Gui.dll" build/Release/
-          Copy-Item "$qtBin/Qt6Widgets.dll" build/Release/
-          $qtPlugins = "$env:Qt6_DIR/../../plugins"
-          Copy-Item "$qtPlugins/platforms" build/Release/platforms -Recurse
-          Copy-Item "$qtPlugins/styles" build/Release/styles -Recurse -ErrorAction SilentlyContinue
+          $qtRoot = "$env:QT_ROOT_DIR"
+          Copy-Item "$qtRoot/bin/Qt6Core.dll" build/Release/
+          Copy-Item "$qtRoot/bin/Qt6Gui.dll" build/Release/
+          Copy-Item "$qtRoot/bin/Qt6Widgets.dll" build/Release/
+          Copy-Item "$qtRoot/plugins/platforms" build/Release/platforms -Recurse
+          Copy-Item "$qtRoot/plugins/styles" build/Release/styles -Recurse -ErrorAction SilentlyContinue
         shell: powershell
 
       - name: Install NSIS
