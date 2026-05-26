@@ -77,32 +77,22 @@ jobs:
             -DCMAKE_PREFIX_PATH="${QT_PREFIX};${ARCHIVE_PREFIX}"
           cmake --build build
 
-      - name: Sign application
+      - name: Deploy, sign, and create DMG
         env:
           APPLE_TEAM_ID: MMZ3Y97NTP
-          CSC_KEYCHAIN: ${{ runner.temp }}/build.keychain
         run: |
-          codesign --force --deep --options runtime \
-            --sign "Developer ID Application: Richard Lesh (${APPLE_TEAM_ID})" \
-            build/ArchiveSphynx.app
-
-      - name: Create DMG
-        run: |
+          if [ "${{ matrix.arch }}" = "x64" ]; then
+            MACDEPLOYQT="/usr/local/opt/qt@6/bin/macdeployqt"
+          else
+            MACDEPLOYQT="$(brew --prefix qt@6)/bin/macdeployqt"
+          fi
           ARCH=${{ matrix.arch }}
           VERSION=${{ steps.version.outputs.version }}
           mkdir -p dist
-          hdiutil create -volname "ArchiveSphynx" \
-            -srcfolder build/ArchiveSphynx.app \
-            -ov -format UDZO \
-            "dist/ArchiveSphynx-${VERSION}-${ARCH}.dmg"
-
-      - name: Sign DMG
-        env:
-          APPLE_TEAM_ID: MMZ3Y97NTP
-        run: |
-          codesign --force \
-            --sign "Developer ID Application: Richard Lesh (${APPLE_TEAM_ID})" \
-            dist/*.dmg
+          "$MACDEPLOYQT" build/ArchiveSphynx.app \
+            -dmg \
+            -codesign="Developer ID Application: Richard Lesh (${APPLE_TEAM_ID})"
+          mv build/ArchiveSphynx.dmg "dist/ArchiveSphynx-${VERSION}-${ARCH}.dmg"
 
       - name: Notarize DMG
         env:
