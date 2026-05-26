@@ -88,11 +88,24 @@ jobs:
           fi
           ARCH=${{ matrix.arch }}
           VERSION=${{ steps.version.outputs.version }}
+          IDENTITY="Developer ID Application: Richard Lesh (${APPLE_TEAM_ID})"
+
+          # Deploy Qt frameworks
+          "$MACDEPLOYQT" build/ArchiveSphynx.app
+
+          # Sign all frameworks and the app with hardened runtime (required for notarization)
+          find build/ArchiveSphynx.app -name "*.dylib" -o -name "*.framework" | while read f; do
+            codesign --force --options runtime --sign "$IDENTITY" "$f"
+          done
+          codesign --force --deep --options runtime --sign "$IDENTITY" build/ArchiveSphynx.app
+
+          # Create DMG
           mkdir -p dist
-          "$MACDEPLOYQT" build/ArchiveSphynx.app \
-            -dmg \
-            -codesign="Developer ID Application: Richard Lesh (${APPLE_TEAM_ID})"
-          mv build/ArchiveSphynx.dmg "dist/ArchiveSphynx-${VERSION}-${ARCH}.dmg"
+          hdiutil create -volname "ArchiveSphynx" \
+            -srcfolder build/ArchiveSphynx.app \
+            -ov -format UDZO \
+            "dist/ArchiveSphynx-${VERSION}-${ARCH}.dmg"
+          codesign --force --sign "$IDENTITY" "dist/ArchiveSphynx-${VERSION}-${ARCH}.dmg"
 
       - name: Notarize DMG
         env:
