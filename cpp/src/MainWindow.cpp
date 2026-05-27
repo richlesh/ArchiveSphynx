@@ -283,10 +283,36 @@ void MainWindow::applyFontSize() {
   QFont f = font();
   f.setPointSize(pt);
   ui->archiveTree->setFont(f);
+  ui->archiveTree->setIconSize(QSize(pt + 2, pt + 2));
   ui->archiveTree->header()->setFont(f);
   ui->archiveTree->header()->setSectionsMovable(true);
   ui->statusBar->setFont(f);
   m_pathBar->setFont(f);
+}
+
+void MainWindow::refreshIcons() {
+  if (!m_model) return;
+  QIcon dirIcon = themedIcon(":/icons/folder_icon.png");
+  QIcon fileIcon = themedIcon(":/icons/file_icon.png");
+  QIcon linkIcon = themedIcon(":/icons/symlink_icon.png");
+
+  std::function<void(QStandardItem *)> update = [&](QStandardItem *parent) {
+    int rows = parent ? parent->rowCount() : m_model->rowCount();
+    for (int i = 0; i < rows; ++i) {
+      QStandardItem *item = parent ? parent->child(i, 0) : m_model->item(i, 0);
+      if (!item) continue;
+      QStandardItem *sizeItem = parent ? parent->child(i, 1) : m_model->item(i, 1);
+      bool isDir = !sizeItem || sizeItem->text().isEmpty();
+      if (isDir) {
+        item->setIcon(dirIcon);
+        update(item);
+      } else {
+        // Check if symlink by icon name or data
+        item->setIcon(item->data(Qt::UserRole + 4).toBool() ? linkIcon : fileIcon);
+      }
+    }
+  };
+  update(nullptr);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
@@ -636,6 +662,7 @@ void MainWindow::openArchiveFile(const QString &filePath) {
       auto *nameItem = new QStandardItem(icon, name);
       nameItem->setData(entry.path, Qt::UserRole + 2); // original archive path
       nameItem->setData(entry.size, Qt::UserRole + 3); // original size
+      nameItem->setData(entry.isSymlink, Qt::UserRole + 4); // symlink flag
       auto *sizeItem = new QStandardItem(humanSize(entry.size));
       sizeItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
       QList<QStandardItem *> row = {nameItem, sizeItem,
@@ -1441,7 +1468,7 @@ void MainWindow::openSettings() {
   if (m_settingsDialog) { m_settingsDialog->activateWindow(); return; }
   m_settingsDialog = new SettingsDialog(m_settings, this);
   connect(m_settingsDialog, &QDialog::accepted, this, [this]() {
-    applyTheme(); applyFontSize(); applyColors();
+    applyTheme(); applyFontSize(); applyColors(); refreshIcons();
   });
   connect(m_settingsDialog, &QDialog::finished, this, [this]() {
     m_settingsDialog->deleteLater(); m_settingsDialog = nullptr;
