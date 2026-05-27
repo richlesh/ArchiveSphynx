@@ -19,6 +19,7 @@ bool ArchiveManager::open(const QString &filePath) {
   struct archive *a = archive_read_new();
   archive_read_support_filter_all(a);
   archive_read_support_format_all(a);
+  archive_read_set_format_option(a, "zip", "mac-ext", NULL);
 
   if (archive_read_open_filename(a, filePath.toUtf8().constData(), 10240) != ARCHIVE_OK) {
     emit errorOccurred(QString::fromUtf8(archive_error_string(a)));
