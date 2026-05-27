@@ -458,8 +458,25 @@ void MainWindow::newArchive() {
   QString filter = tr("ZIP Archive (*.zip);;7-Zip Archive (*.7z);;Tar Archive (*.tar);;"
                       "Tar+Gzip (*.tgz);;Tar+Bzip2 (*.tbz);;"
                       "Tar+XZ (*.txz);;Tar+Zstd (*.tzst)");
-  QString file = QFileDialog::getSaveFileName(this, tr("New Archive"), QString(), filter);
+  QString selectedFilter;
+  QString file = QFileDialog::getSaveFileName(this, tr("New Archive"), QString(), filter, &selectedFilter);
   if (file.isEmpty()) return;
+
+  // Fix extension if macOS native dialog appended wrong one
+  if (selectedFilter.contains("*.tbz") && !file.endsWith(".tbz"))
+    file = file.section('.', 0, 0) + ".tbz";
+  else if (selectedFilter.contains("*.tgz") && !file.endsWith(".tgz"))
+    file = file.section('.', 0, 0) + ".tgz";
+  else if (selectedFilter.contains("*.txz") && !file.endsWith(".txz"))
+    file = file.section('.', 0, 0) + ".txz";
+  else if (selectedFilter.contains("*.tzst") && !file.endsWith(".tzst"))
+    file = file.section('.', 0, 0) + ".tzst";
+  else if (selectedFilter.contains("*.tar") && !file.endsWith(".tar"))
+    file = file.section('.', 0, 0) + ".tar";
+  else if (selectedFilter.contains("*.zip") && !file.endsWith(".zip"))
+    file = file.section('.', 0, 0) + ".zip";
+  else if (selectedFilter.contains("*.7z") && !file.endsWith(".7z"))
+    file = file.section('.', 0, 0) + ".7z";
 
   // If current window already has an archive, use a new window
   MainWindow *target = this;
@@ -1012,6 +1029,23 @@ void MainWindow::saveArchiveAs() {
   QString file = QFileDialog::getSaveFileName(this, tr("Save Archive As"),
     defaultDir + "/" + baseName, filter, &selectedFilter);
   if (file.isEmpty()) return;
+
+  // Fix extension if macOS native dialog appended wrong one
+  if (selectedFilter.contains("*.tbz") && !file.endsWith(".tbz"))
+    file = file.section('.', 0, 0) + ".tbz";
+  else if (selectedFilter.contains("*.tgz") && !file.endsWith(".tgz"))
+    file = file.section('.', 0, 0) + ".tgz";
+  else if (selectedFilter.contains("*.txz") && !file.endsWith(".txz"))
+    file = file.section('.', 0, 0) + ".txz";
+  else if (selectedFilter.contains("*.tzst") && !file.endsWith(".tzst"))
+    file = file.section('.', 0, 0) + ".tzst";
+  else if (selectedFilter.contains("*.tar") && !file.endsWith(".tar"))
+    file = file.section('.', 0, 0) + ".tar";
+  else if (selectedFilter.contains("*.zip") && !file.endsWith(".zip"))
+    file = file.section('.', 0, 0) + ".zip";
+  else if (selectedFilter.contains("*.7z") && !file.endsWith(".7z"))
+    file = file.section('.', 0, 0) + ".7z";
+
   m_saving = true;
   m_cancelSave = false;
   m_toolbar->setEnabled(false);
