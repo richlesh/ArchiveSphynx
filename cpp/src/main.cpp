@@ -2,6 +2,7 @@
 // License: GPL v3.0
 
 #include <QApplication>
+#include <QFileOpenEvent>
 #include <QStyleFactory>
 #include <QPalette>
 #include <QStyle>
@@ -10,6 +11,28 @@
 #include "SplashScreen.h"
 #include "Settings.h"
 #include "LicenseValidator.h"
+
+class Application : public QApplication {
+public:
+  using QApplication::QApplication;
+  MainWindow *mainWindow = nullptr;
+
+protected:
+  bool event(QEvent *event) override {
+    if (event->type() == QEvent::FileOpen) {
+      auto *foe = static_cast<QFileOpenEvent *>(event);
+      if (mainWindow)
+        mainWindow->openArchiveFile(foe->file());
+      else
+        m_pendingFile = foe->file();
+      return true;
+    }
+    return QApplication::event(event);
+  }
+
+public:
+  QString m_pendingFile;
+};
 
 static void applyAppTheme(const Settings &settings) {
   QString theme = settings.theme();
@@ -57,7 +80,7 @@ static void applyAppTheme(const Settings &settings) {
 }
 
 int main(int argc, char *argv[]) {
-  QApplication app(argc, argv);
+  Application app(argc, argv);
   app.setApplicationName("ArchiveSphynx");
   app.setApplicationVersion(APP_VERSION);
   app.setOrganizationName("Richard Lesh");
@@ -77,7 +100,15 @@ int main(int argc, char *argv[]) {
   }
 
   MainWindow mainWindow(settings, licensed);
+  app.mainWindow = &mainWindow;
   mainWindow.show();
+
+  // Open file from command line (Windows/Linux) or pending macOS FileOpen event
+  QString fileToOpen = app.m_pendingFile;
+  if (fileToOpen.isEmpty() && argc > 1)
+    fileToOpen = QString::fromLocal8Bit(argv[1]);
+  if (!fileToOpen.isEmpty())
+    mainWindow.openArchiveFile(fileToOpen);
 
   return app.exec();
 }

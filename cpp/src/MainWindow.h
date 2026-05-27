@@ -27,6 +27,7 @@ class MainWindow : public QMainWindow {
 public:
   explicit MainWindow(Settings &settings, bool licensed, QWidget *parent = nullptr);
   ~MainWindow() override;
+  void openArchiveFile(const QString &filePath);
 
 protected:
   void closeEvent(QCloseEvent *event) override;
@@ -38,7 +39,6 @@ protected:
 private slots:
   void newArchive();
   void openArchive();
-  void openArchiveFile(const QString &filePath);
   void saveArchive();
   void saveArchiveAs();
   void addFiles();
@@ -63,6 +63,7 @@ private:
   void markDirty();
   QStandardItem *selectedFolderItem() const;
   void addExternalFiles(const QStringList &paths, QStandardItem *parent);
+  void refreshIcons();
 
   Ui::MainWindow *ui;
   Settings &m_settings;
