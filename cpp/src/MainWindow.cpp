@@ -175,7 +175,7 @@ void MainWindow::setupMenus() {
   auto *aboutAction = fileMenu->addAction(tr("About ArchiveSphynx"), this, &MainWindow::openAbout);
   aboutAction->setMenuRole(QAction::AboutRole);
   auto *settingsAction = fileMenu->addAction(tr("Settings…"), this, &MainWindow::openSettings);
-  settingsAction->setMenuRole(QAction::PreferencesRole);
+  settingsAction->setMenuRole(QAction::ApplicationSpecificRole);
   auto *licenseAction = fileMenu->addAction(tr("License Key…"), this, &MainWindow::openLicenseDialog);
   licenseAction->setMenuRole(QAction::ApplicationSpecificRole);
 }
