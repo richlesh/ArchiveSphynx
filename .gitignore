@@ -7,3 +7,4 @@ packages/sphynx/build/
 generate_license_key.py
 license.js
 cpp/src/License.cpp
+*.log
