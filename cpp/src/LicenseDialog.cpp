@@ -28,7 +28,9 @@ LicenseDialog::LicenseDialog(Settings &settings, QWidget *parent)
                            ui->licenseKeyEdit->text().trimmed().toUpper());
     okBtn->setEnabled(valid);
     if (valid)
-      okBtn->setStyleSheet("QPushButton { background-color: #34a853; color: white; }");
+      okBtn->setStyleSheet(
+        "QPushButton { background-color: #008800; color: white; }"
+        "QPushButton:hover { background-color: #00cc00; }");
     else {
       bool dark = palette().window().color().lightness() < 128;
       okBtn->setStyleSheet(dark ? "QPushButton { background-color: #555; color: #888; }"
