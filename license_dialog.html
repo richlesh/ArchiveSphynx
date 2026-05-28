@@ -74,7 +74,7 @@
 
   <script>
     const { ipcRenderer } = require("electron");
-    const nodeCrypto = require("crypto");
+    const {expectedLicenseKey, isValidLicense} = require("./utilities.js");
 
     document.getElementById("donate-link").addEventListener("click", e => {
       e.preventDefault();
@@ -90,18 +90,11 @@
       return clean.match(/.{1,4}/g)?.join("-") || "";
     }
 
-    function expectedKey(name) {
-      const { LICENSE_SALT } = require("./license.js");
-      const hmac = nodeCrypto.createHmac("sha256", LICENSE_SALT);
-      hmac.update(name.toLowerCase().trim());
-      return hmac.digest("hex").slice(0, 16).toUpperCase();
-    }
-
     function validate() {
       const name  = nameInput.value.trim();
       const clean = licenseInput.value.replace(/-/g, "");
       const keyOk = clean.length === 16;
-      const match = keyOk && name.length > 0 && clean.toUpperCase() === expectedKey(name);
+      const match = keyOk && name.length > 0 && clean.toUpperCase() === expectedLicenseKey(name);
       saveBtn.disabled = !match;
       licenseInput.classList.toggle("invalid", clean.length > 0 && !keyOk);
     }
