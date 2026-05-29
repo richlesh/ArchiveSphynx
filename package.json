@@ -131,6 +131,9 @@
       "identity": "RICHARD A LESH (MMZ3Y97NTP)",
       "notarize": true
     },
+    "dmg": {
+      "icon": "app_icon.icns"
+    },
     "win": {
       "target": "nsis"
     },
