@@ -116,12 +116,47 @@ jobs:
           done
           codesign --force --deep --options runtime --sign "$IDENTITY" --timestamp build/ArchiveSphynx.app
 
-          # Create DMG
-          mkdir -p dist
+          # Stage DMG contents
+          mkdir -p dist dmg_stage
+          cp -R build/ArchiveSphynx.app dmg_stage/
+          ln -s /Applications dmg_stage/Applications
+
+          # Create read-write DMG
           hdiutil create -volname "ArchiveSphynx" \
-            -srcfolder build/ArchiveSphynx.app \
-            -ov -format UDZO \
-            "dist/ArchiveSphynx-${VERSION}-${ARCH}.dmg"
+            -srcfolder dmg_stage \
+            -ov -format UDRW \
+            "dist/ArchiveSphynx-rw.dmg"
+
+          # Mount and customize
+          hdiutil attach "dist/ArchiveSphynx-rw.dmg" -mountpoint /Volumes/ArchiveSphynx
+          cp cpp/resources/icons/app_icon.icns /Volumes/ArchiveSphynx/.VolumeIcon.icns
+          SetFile -a C /Volumes/ArchiveSphynx
+
+          # Set Finder window layout
+          osascript <<'EOF'
+          tell application "Finder"
+            tell disk "ArchiveSphynx"
+              open
+              set current view of container window to icon view
+              set toolbar visible of container window to false
+              set statusbar visible of container window to false
+              set bounds of container window to {100, 100, 640, 400}
+              set theViewOptions to icon view options of container window
+              set arrangement of theViewOptions to not arranged
+              set icon size of theViewOptions to 80
+              set position of item "ArchiveSphynx.app" of container window to {130, 150}
+              set position of item "Applications" of container window to {410, 150}
+              close
+            end tell
+          end tell
+          EOF
+
+          hdiutil detach /Volumes/ArchiveSphynx
+
+          # Convert to compressed format
+          hdiutil convert "dist/ArchiveSphynx-rw.dmg" \
+            -format UDZO -o "dist/ArchiveSphynx-${VERSION}-${ARCH}.dmg"
+          rm "dist/ArchiveSphynx-rw.dmg"
           codesign --force --sign "$IDENTITY" "dist/ArchiveSphynx-${VERSION}-${ARCH}.dmg"
 
       - name: Notarize DMG
