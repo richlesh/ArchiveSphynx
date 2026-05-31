@@ -94,6 +94,7 @@ jobs:
           Copy-Item "$redistDir\vcruntime140_1.dll" build/Release/ -ErrorAction SilentlyContinue
           Copy-Item "$redistDir\msvcp140.dll" build/Release/
           Copy-Item "$redistDir\msvcp140_1.dll" build/Release/ -ErrorAction SilentlyContinue
+          Copy-Item "$redistDir\msvcp140_2.dll" build/Release/ -ErrorAction SilentlyContinue
         shell: powershell
 
       - name: Create installer with NSIS
