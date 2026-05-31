@@ -16,7 +16,6 @@
 SplashScreen::SplashScreen(QWidget *parent) : QDialog(parent) {
   setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
   setAttribute(Qt::WA_TranslucentBackground);
-  setFixedSize(280 , 360);
   setModal(true);
 
   auto *layout = new QVBoxLayout(this);
@@ -60,6 +59,9 @@ SplashScreen::SplashScreen(QWidget *parent) : QDialog(parent) {
   m_timer.setSingleShot(true);
   connect(&m_timer, &QTimer::timeout, this, &QDialog::accept);
   m_timer.start(20000);
+
+  adjustSize();
+  setFixedSize(sizeHint());
 }
 
 void SplashScreen::paintEvent(QPaintEvent *) {
