@@ -18,7 +18,6 @@ AboutDialog::AboutDialog(bool licensed, QWidget *parent)
   : QDialog(parent), ui(nullptr) {
   setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
   setAttribute(Qt::WA_TranslucentBackground);
-  setFixedSize(280 , 420);
   setModal(true);
 
   auto *layout = new QVBoxLayout(this);
@@ -83,6 +82,9 @@ AboutDialog::AboutDialog(bool licensed, QWidget *parent)
     thanksLabel->setVisible(licensed);
     layout->addWidget(thanksLabel);
   }
+
+  adjustSize();
+  setFixedSize(sizeHint());
 }
 
 AboutDialog::~AboutDialog() {
