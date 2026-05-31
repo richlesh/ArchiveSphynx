@@ -154,6 +154,17 @@ void MainWindow::setupToolbar() {
 }
 
 void MainWindow::setupMenus() {
+#ifndef Q_OS_MACOS
+  // On Windows/Linux, add app menu before File
+  auto *appMenu = menuBar()->addMenu(tr("&ArchiveSphynx"));
+  appMenu->addAction(tr("About ArchiveSphynx"), this, &MainWindow::openAbout);
+  appMenu->addSeparator();
+  appMenu->addAction(tr("Settings…"), this, &MainWindow::openSettings);
+  appMenu->addAction(tr("License Key…"), this, &MainWindow::openLicenseDialog);
+  appMenu->addSeparator();
+  appMenu->addAction(tr("E&xit"), QKeySequence::Quit, this, &QWidget::close);
+#endif
+
   auto *fileMenu = menuBar()->addMenu(tr("&File"));
   fileMenu->addAction(tr("&New Archive"), QKeySequence::New, this, &MainWindow::newArchive);
   fileMenu->addAction(tr("&Open Archive…"), QKeySequence::Open, this, &MainWindow::openArchive);
@@ -168,16 +179,18 @@ void MainWindow::setupMenus() {
   fileMenu->addSeparator();
   m_menuTest = fileMenu->addAction(tr("Test Integrity"), QKeySequence(tr("Ctrl+T")), this, &MainWindow::testIntegrity);
   m_menuClean = fileMenu->addAction(tr("Clean macOS"), this, &MainWindow::cleanMacOS);
-  fileMenu->addSeparator();
-  fileMenu->addAction(tr("E&xit"), QKeySequence::Quit, this, &QWidget::close);
 
-  // These get moved to the macOS app menu automatically via roles
+#ifdef Q_OS_MACOS
+  // On macOS, these get moved to the app menu automatically via roles
   auto *aboutAction = fileMenu->addAction(tr("About ArchiveSphynx"), this, &MainWindow::openAbout);
   aboutAction->setMenuRole(QAction::AboutRole);
   auto *settingsAction = fileMenu->addAction(tr("Settings…"), this, &MainWindow::openSettings);
   settingsAction->setMenuRole(QAction::ApplicationSpecificRole);
   auto *licenseAction = fileMenu->addAction(tr("License Key…"), this, &MainWindow::openLicenseDialog);
   licenseAction->setMenuRole(QAction::ApplicationSpecificRole);
+  fileMenu->addSeparator();
+  fileMenu->addAction(tr("E&xit"), QKeySequence::Quit, this, &QWidget::close);
+#endif
 }
 
 void MainWindow::updateActions() {
