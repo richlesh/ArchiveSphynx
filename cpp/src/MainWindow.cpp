@@ -295,6 +295,7 @@ void MainWindow::applyFontSize() {
   else if (size == "Large") pt = 18;
   QFont f = font();
   f.setPointSize(pt);
+  menuBar()->setFont(f);
   ui->archiveTree->setFont(f);
   ui->archiveTree->setIconSize(QSize(pt + 2, pt + 2));
   ui->archiveTree->header()->setFont(f);
