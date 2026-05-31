@@ -513,8 +513,20 @@ void MainWindow::newArchive() {
 
   target->ui->archiveTree->setModel(target->m_proxy);
   target->ui->archiveTree->setSortingEnabled(true);
-  if (!target->m_settings.headerState().isEmpty())
+  if (!target->m_settings.headerState().isEmpty()) {
     target->ui->archiveTree->header()->restoreState(target->m_settings.headerState());
+    bool valid = true;
+    for (int i = 0; i < target->ui->archiveTree->header()->count(); ++i) {
+      if (!target->ui->archiveTree->header()->isSectionHidden(i) && target->ui->archiveTree->header()->sectionSize(i) < 10) {
+        valid = false;
+        break;
+      }
+    }
+    if (!valid) {
+      target->ui->archiveTree->header()->reset();
+      target->m_settings.setHeaderState(QByteArray());
+    }
+  }
   target->m_pathBar->setText(file);
   target->m_archiveManager->setCurrentFile(file);
   target->m_dirty = true;
@@ -722,6 +734,22 @@ void MainWindow::openArchiveFile(const QString &filePath) {
   ui->archiveTree->sortByColumn(0, Qt::AscendingOrder);
   if (!m_settings.headerState().isEmpty()) {
     ui->archiveTree->header()->restoreState(m_settings.headerState());
+    // Discard stale state if columns are collapsed
+    bool valid = true;
+    for (int i = 0; i < ui->archiveTree->header()->count(); ++i) {
+      if (!ui->archiveTree->header()->isSectionHidden(i) && ui->archiveTree->header()->sectionSize(i) < 10) {
+        valid = false;
+        break;
+      }
+    }
+    if (!valid) {
+      ui->archiveTree->header()->reset();
+      ui->archiveTree->resizeColumnToContents(0);
+      ui->archiveTree->setColumnWidth(0, ui->archiveTree->columnWidth(0) * 2);
+      ui->archiveTree->resizeColumnToContents(2);
+      ui->archiveTree->setColumnWidth(2, ui->archiveTree->columnWidth(2) + 30);
+      m_settings.setHeaderState(QByteArray());
+    }
   } else {
     ui->archiveTree->resizeColumnToContents(0);
     ui->archiveTree->setColumnWidth(0, ui->archiveTree->columnWidth(0) * 2);
