@@ -235,7 +235,7 @@ void MainWindow::applyColors() {
 
   m_toolbar->setStyleSheet(
     QString("QToolBar { padding: 4px; }"
-            "QToolBar QToolButton { font-size: %2px; padding: 6px 10px; }"
+            "QToolBar QToolButton { font-size: %2pt; padding: 6px 10px; }"
             "QToolBar QToolButton:disabled { color: gray; }"
             "QToolBar QToolButton:hover { background-color: %1; color: white; border: none; border-radius: 4px; }"
             "QToolBar QToolButton:pressed { background-color: %1; color: white; font-weight: bold; border: none; border-radius: 4px; }")
@@ -295,6 +295,7 @@ void MainWindow::applyFontSize() {
   else if (size == "Large") pt = 18;
   QFont f = font();
   f.setPointSize(pt);
+  qApp->setFont(f);
   menuBar()->setFont(f);
   ui->archiveTree->setFont(f);
   ui->archiveTree->setIconSize(QSize(pt + 2, pt + 2));
