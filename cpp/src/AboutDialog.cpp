@@ -23,7 +23,7 @@ AboutDialog::AboutDialog(bool licensed, QWidget *parent)
   auto *layout = new QVBoxLayout(this);
   layout->setAlignment(Qt::AlignCenter);
   layout->setSpacing(8);
-  layout->setContentsMargins(15, 15, 15, 15);
+  layout->setContentsMargins(30, 30, 30, 30);
 
   // App icon
   auto *iconLabel = new QLabel(this);
