@@ -347,7 +347,8 @@ void MainWindow::closeEvent(QCloseEvent *event) {
   }
 
   m_settings.setWindowSize(size());
-  m_settings.setHeaderState(ui->archiveTree->header()->saveState());
+  if (m_model && m_model->columnCount() > 0)
+    m_settings.setHeaderState(ui->archiveTree->header()->saveState());
   m_settings.save();
 
   if (m_dirty) {
@@ -526,8 +527,17 @@ void MainWindow::newArchive() {
     }
     if (!valid) {
       target->ui->archiveTree->header()->reset();
+      target->ui->archiveTree->resizeColumnToContents(0);
+      target->ui->archiveTree->setColumnWidth(0, target->ui->archiveTree->columnWidth(0) * 2);
+      target->ui->archiveTree->resizeColumnToContents(2);
+      target->ui->archiveTree->setColumnWidth(2, target->ui->archiveTree->columnWidth(2) + 30);
       target->m_settings.setHeaderState(QByteArray());
     }
+  } else {
+    target->ui->archiveTree->resizeColumnToContents(0);
+    target->ui->archiveTree->setColumnWidth(0, target->ui->archiveTree->columnWidth(0) * 2);
+    target->ui->archiveTree->resizeColumnToContents(2);
+    target->ui->archiveTree->setColumnWidth(2, target->ui->archiveTree->columnWidth(2) + 30);
   }
   target->m_pathBar->setText(file);
   target->m_archiveManager->setCurrentFile(file);
