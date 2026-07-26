@@ -1,3 +1,5 @@
+![app_icon_256](app_icon_256.png)
+
 # ArchiveSphynx v1.2.0
 
 A cross-platform archive management tool.
