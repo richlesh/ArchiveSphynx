@@ -8,8 +8,14 @@
 #include <QFile>
 #include <QHash>
 #include <QSet>
+#include <QDirIterator>
 #include <archive.h>
 #include <archive_entry.h>
+
+#ifdef Q_OS_MACOS
+#include <sys/stat.h>
+#include <sys/xattr.h>
+#endif
 
 ArchiveManager::ArchiveManager(QObject *parent) : QObject(parent) {}
 
@@ -91,7 +97,7 @@ void ArchiveManager::setCurrentFile(const QString &filePath) { m_currentFile = f
 QList<ArchiveEntry> ArchiveManager::entries() const { return m_entries; }
 bool ArchiveManager::isReadOnly() const { return m_readOnly; }
 
-bool ArchiveManager::extractTo(const QString &destDir) {
+bool ArchiveManager::extractTo(const QString &destDir, OverwriteCallback overwriteCallback) {
   if (m_currentFile.isEmpty()) return false;
 
   struct archive *a = archive_read_new();
@@ -111,11 +117,48 @@ bool ArchiveManager::extractTo(const QString &destDir) {
 
   int total = m_entries.size();
   int current = 0;
+  bool replaceAll = false;
+  bool skipAll = false;
 
   struct archive_entry *entry;
   while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
     QString entryPath = destDir + "/" + QString::fromUtf8(archive_entry_pathname(entry));
     archive_entry_set_pathname(entry, entryPath.toUtf8().constData());
+
+    // Check for overwrite conflict
+    bool isDir = (archive_entry_filetype(entry) == AE_IFDIR);
+    bool exists = isDir ? QDir(entryPath).exists() : QFileInfo::exists(entryPath);
+
+    if (exists && !isDir && overwriteCallback && !replaceAll && !skipAll) {
+      OverwriteAction action = overwriteCallback(entryPath);
+      switch (action) {
+        case OverwriteAction::ReplaceAll:
+          replaceAll = true;
+          break;
+        case OverwriteAction::Replace:
+          break;
+        case OverwriteAction::Skip:
+          archive_read_data_skip(a);
+          current++;
+          if (total > 0) emit progressChanged(current * 100 / total);
+          continue;
+        case OverwriteAction::SkipAll:
+          skipAll = true;
+          archive_read_data_skip(a);
+          current++;
+          if (total > 0) emit progressChanged(current * 100 / total);
+          continue;
+        case OverwriteAction::Cancel:
+          archive_read_free(a);
+          archive_write_free(ext);
+          return false;
+      }
+    } else if (exists && !isDir && skipAll) {
+      archive_read_data_skip(a);
+      current++;
+      if (total > 0) emit progressChanged(current * 100 / total);
+      continue;
+    }
 
     if (archive_write_header(ext, entry) != ARCHIVE_OK) continue;
 
@@ -135,6 +178,11 @@ bool ArchiveManager::extractTo(const QString &destDir) {
 
   archive_read_free(a);
   archive_write_free(ext);
+
+#ifdef Q_OS_MACOS
+  fixupMacOSApps(destDir);
+#endif
+
   return true;
 }
 
@@ -265,4 +313,50 @@ bool ArchiveManager::saveTo(const QString &destPath, const QList<ArchiveEntry> &
   QFile::remove(destPath);
   QFile::rename(tmpPath, destPath);
   return true;
+}
+
+void ArchiveManager::fixupMacOSApps(const QString &directory) {
+#ifdef Q_OS_MACOS
+  // Scan the top-level extracted directory for .app bundles
+  QDirIterator it(directory, QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+  QStringList appBundles;
+
+  // Also check direct children
+  QDir topDir(directory);
+  for (const auto &entry : topDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+    if (entry.endsWith(".app"))
+      appBundles.append(topDir.absoluteFilePath(entry));
+  }
+
+  while (it.hasNext()) {
+    QString path = it.next();
+    if (path.endsWith(".app"))
+      appBundles.append(path);
+  }
+
+  for (const QString &appPath : appBundles) {
+    // Set executable permissions on all files in Contents/MacOS/
+    QString macosDir = appPath + "/Contents/MacOS";
+    QDir macos(macosDir);
+    if (macos.exists()) {
+      for (const auto &file : macos.entryList(QDir::Files)) {
+        QString filePath = macos.absoluteFilePath(file);
+        QFile::setPermissions(filePath,
+          QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner |
+          QFileDevice::ReadGroup | QFileDevice::ExeGroup |
+          QFileDevice::ReadOther | QFileDevice::ExeOther);
+      }
+    }
+
+    // Recursively remove com.apple.quarantine extended attribute
+    QDirIterator qIt(appPath, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden, QDirIterator::Subdirectories);
+    removexattr(appPath.toUtf8().constData(), "com.apple.quarantine", 0);
+    while (qIt.hasNext()) {
+      QString filePath = qIt.next();
+      removexattr(filePath.toUtf8().constData(), "com.apple.quarantine", 0);
+    }
+  }
+#else
+  Q_UNUSED(directory);
+#endif
 }

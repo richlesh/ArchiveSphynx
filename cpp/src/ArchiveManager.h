@@ -7,6 +7,7 @@
 #include <QObject>
 #include <QStringList>
 #include <QDateTime>
+#include <functional>
 
 struct ArchiveEntry {
   QString path;
@@ -20,6 +21,20 @@ struct ArchiveEntry {
   QString compressionMethod;
 };
 
+/// Response to an overwrite conflict prompt.
+enum class OverwriteAction {
+  Replace,    ///< Replace the existing file/folder
+  ReplaceAll, ///< Replace all remaining conflicts without asking
+  Skip,       ///< Skip this file
+  SkipAll,    ///< Skip all remaining conflicts without asking
+  Cancel      ///< Cancel the entire extraction
+};
+
+/// Callback invoked when an extraction would overwrite an existing file or folder.
+/// The argument is the destination path that already exists.
+/// Return the desired OverwriteAction.
+using OverwriteCallback = std::function<OverwriteAction(const QString &existingPath)>;
+
 class ArchiveManager : public QObject {
   Q_OBJECT
 
@@ -31,9 +46,12 @@ public:
   void setCurrentFile(const QString &filePath);
   QString currentFile() const;
   QList<ArchiveEntry> entries() const;
-  bool extractTo(const QString &destDir);
+  bool extractTo(const QString &destDir, OverwriteCallback overwriteCallback = nullptr);
   bool saveTo(const QString &destPath, const QList<ArchiveEntry> &entries, const QHash<QString, QString> &fileSources, const QString &originalArchive);
   bool isReadOnly() const;
+
+  /// Fix macOS .app bundles after extraction: set executable permissions and remove quarantine.
+  static void fixupMacOSApps(const QString &directory);
 
 signals:
   void archiveOpened(const QString &filePath);

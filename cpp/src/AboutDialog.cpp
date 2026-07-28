@@ -84,7 +84,9 @@ AboutDialog::AboutDialog(bool licensed, QWidget *parent)
   }
 
   adjustSize();
-  setFixedSize(sizeHint());
+  QSize s = sizeHint();
+  s.setWidth(static_cast<int>(s.width() * 1.4));
+  setFixedSize(s);
 }
 
 AboutDialog::~AboutDialog() {
