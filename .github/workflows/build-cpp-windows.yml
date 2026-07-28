@@ -52,13 +52,14 @@ jobs:
           (Get-Content cpp/CMakeLists.txt) -replace 'project\(ArchiveSphynx VERSION [0-9.]+', "project(ArchiveSphynx VERSION ${{ steps.version.outputs.version }}" | Set-Content cpp/CMakeLists.txt
         shell: powershell
 
+      - name: Setup MSVC Developer Environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+
       - name: Configure and Build
         shell: pwsh
         run: |
-          # Initialize the MSVC native developer environment
-          $arch = "${{ matrix.arch }}"
-          . "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Launch-VsDevShell.ps1" -Arch $arch -HostArch amd64
-
           # Run CMake with Ninja instead of Visual Studio project generator
           cmake -S cpp -B build `
             -G "Ninja" `
