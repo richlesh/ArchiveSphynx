@@ -1315,10 +1315,30 @@ void MainWindow::extractArchive() {
     m_toolbar->setEnabled(false);
     menuBar()->setEnabled(false);
     m_progressBar->setVisible(true);
-    if (m_archiveManager->extractTo(dir))
+    auto overwriteCb = [this](const QString &path) -> OverwriteAction {
+      QFileInfo fi(path);
+      QMessageBox box(this);
+      box.setWindowTitle(tr("Confirm Overwrite"));
+      box.setText(tr("The destination already contains a file named \"%1\".").arg(fi.fileName()));
+      box.setInformativeText(tr("Do you want to replace it?"));
+      QPushButton *replaceBtn = box.addButton(tr("Replace"), QMessageBox::AcceptRole);
+      QPushButton *replaceAllBtn = box.addButton(tr("Replace All"), QMessageBox::AcceptRole);
+      QPushButton *skipBtn = box.addButton(tr("Skip"), QMessageBox::RejectRole);
+      QPushButton *skipAllBtn = box.addButton(tr("Skip All"), QMessageBox::RejectRole);
+      QPushButton *cancelBtn = box.addButton(QMessageBox::Cancel);
+      box.setDefaultButton(skipBtn);
+      box.exec();
+      QAbstractButton *clicked = box.clickedButton();
+      if (clicked == replaceBtn) return OverwriteAction::Replace;
+      if (clicked == replaceAllBtn) return OverwriteAction::ReplaceAll;
+      if (clicked == skipAllBtn) return OverwriteAction::SkipAll;
+      if (clicked == cancelBtn) return OverwriteAction::Cancel;
+      return OverwriteAction::Skip;
+    };
+    if (m_archiveManager->extractTo(dir, overwriteCb))
       ui->statusBar->showMessage(tr("Extracted all to: %1").arg(dir));
     else
-      ui->statusBar->showMessage(tr("Extraction failed"));
+      ui->statusBar->showMessage(tr("Extraction cancelled"));
     m_progressBar->setVisible(false);
     m_toolbar->setEnabled(true);
     menuBar()->setEnabled(true);
@@ -1369,6 +1389,9 @@ void MainWindow::extractArchive() {
   menuBar()->setEnabled(false);
   m_progressBar->setVisible(true);
   m_progressBar->setValue(0);
+  bool replaceAll = false;
+  bool skipAll = false;
+  bool cancelled = false;
 
   if (archive_read_open_filename(src, archivePath.toUtf8().constData(), 10240) == ARCHIVE_OK) {
     struct archive_entry *entry;
@@ -1391,6 +1414,40 @@ void MainWindow::extractArchive() {
           m_progressBar->setValue(extracted * 100 / qMax(extractTotal, 1));
           QApplication::processEvents();
         } else {
+          // Check for overwrite conflict
+          if (QFileInfo::exists(fullPath) && !replaceAll && !skipAll) {
+            QFileInfo fi(fullPath);
+            QMessageBox box(this);
+            box.setWindowTitle(tr("Confirm Overwrite"));
+            box.setText(tr("The destination already contains a file named \"%1\".").arg(fi.fileName()));
+            box.setInformativeText(tr("Do you want to replace it?"));
+            QPushButton *replaceBtn = box.addButton(tr("Replace"), QMessageBox::AcceptRole);
+            QPushButton *replaceAllBtn = box.addButton(tr("Replace All"), QMessageBox::AcceptRole);
+            QPushButton *skipBtn = box.addButton(tr("Skip"), QMessageBox::RejectRole);
+            QPushButton *skipAllBtn = box.addButton(tr("Skip All"), QMessageBox::RejectRole);
+            QPushButton *cancelBtn = box.addButton(QMessageBox::Cancel);
+            box.setDefaultButton(skipBtn);
+            box.exec();
+            QAbstractButton *clicked = box.clickedButton();
+            if (clicked == replaceAllBtn) {
+              replaceAll = true;
+            } else if (clicked == skipBtn) {
+              archive_read_data_skip(src);
+              continue;
+            } else if (clicked == skipAllBtn) {
+              skipAll = true;
+              archive_read_data_skip(src);
+              continue;
+            } else if (clicked == cancelBtn) {
+              cancelled = true;
+              break;
+            }
+            // Replace or ReplaceAll: fall through to extraction
+          } else if (QFileInfo::exists(fullPath) && skipAll) {
+            archive_read_data_skip(src);
+            continue;
+          }
+
           // Ensure parent directory exists
           QDir().mkpath(QFileInfo(fullPath).absolutePath());
           QFile outFile(fullPath);
@@ -1402,6 +1459,23 @@ void MainWindow::extractArchive() {
               QApplication::processEvents();
             }
             outFile.close();
+
+            // Restore file permissions from archive
+            unsigned int perm = archive_entry_perm(entry);
+            if (perm != 0) {
+              QFile::Permissions qperms;
+              if (perm & 0400) qperms |= QFileDevice::ReadOwner;
+              if (perm & 0200) qperms |= QFileDevice::WriteOwner;
+              if (perm & 0100) qperms |= QFileDevice::ExeOwner;
+              if (perm & 0040) qperms |= QFileDevice::ReadGroup;
+              if (perm & 0020) qperms |= QFileDevice::WriteGroup;
+              if (perm & 0010) qperms |= QFileDevice::ExeGroup;
+              if (perm & 0004) qperms |= QFileDevice::ReadOther;
+              if (perm & 0002) qperms |= QFileDevice::WriteOther;
+              if (perm & 0001) qperms |= QFileDevice::ExeOther;
+              QFile::setPermissions(fullPath, qperms);
+            }
+
             extracted++;
             m_progressBar->setValue(extracted * 100 / qMax(extractTotal, 1));
             QApplication::processEvents();
@@ -1417,34 +1491,71 @@ void MainWindow::extractArchive() {
   // Also extract newly-added files that aren't in the archive (from disk sources)
   QHash<QString, QString> diskSources;
   QStringList dummyPaths;
-  for (const auto &proxyIdx : indexes) {
-    QModelIndex srcIdx = m_proxy->mapToSource(proxyIdx);
-    QStandardItem *item = m_model->itemFromIndex(srcIdx);
-    if (!item) continue;
-    QStringList parts;
-    QStandardItem *cur = item;
-    while (cur) { parts.prepend(cur->text()); cur = cur->parent(); }
-    QString prefix = parts.size() > 1 ? parts.mid(0, parts.size() - 1).join("/") : QString();
-    collectPaths(item, prefix.isEmpty() ? item->text() : prefix + "/" + item->text(), dummyPaths, diskSources);
-    // Check the item itself
-    QVariant src = item->data(Qt::UserRole + 1);
-    if (src.isValid()) {
-      QString itemPath = parts.join("/");
-      diskSources[itemPath] = src.toString();
+  if (!cancelled) {
+    for (const auto &proxyIdx : indexes) {
+      QModelIndex srcIdx = m_proxy->mapToSource(proxyIdx);
+      QStandardItem *item = m_model->itemFromIndex(srcIdx);
+      if (!item) continue;
+      QStringList parts;
+      QStandardItem *cur = item;
+      while (cur) { parts.prepend(cur->text()); cur = cur->parent(); }
+      QString prefix = parts.size() > 1 ? parts.mid(0, parts.size() - 1).join("/") : QString();
+      collectPaths(item, prefix.isEmpty() ? item->text() : prefix + "/" + item->text(), dummyPaths, diskSources);
+      // Check the item itself
+      QVariant src = item->data(Qt::UserRole + 1);
+      if (src.isValid()) {
+        QString itemPath = parts.join("/");
+        diskSources[itemPath] = src.toString();
+      }
+    }
+    for (auto it = diskSources.begin(); it != diskSources.end(); ++it) {
+      QString destFile = dir + "/" + it.key();
+      QFileInfo dfi(destFile);
+      if (QFileInfo::exists(destFile) && !replaceAll && !skipAll) {
+        QMessageBox box(this);
+        box.setWindowTitle(tr("Confirm Overwrite"));
+        box.setText(tr("The destination already contains a file named \"%1\".").arg(dfi.fileName()));
+        box.setInformativeText(tr("Do you want to replace it?"));
+        QPushButton *replaceBtn = box.addButton(tr("Replace"), QMessageBox::AcceptRole);
+        QPushButton *replaceAllBtn = box.addButton(tr("Replace All"), QMessageBox::AcceptRole);
+        QPushButton *skipBtn = box.addButton(tr("Skip"), QMessageBox::RejectRole);
+        QPushButton *skipAllBtn = box.addButton(tr("Skip All"), QMessageBox::RejectRole);
+        QPushButton *cancelBtn = box.addButton(QMessageBox::Cancel);
+        box.setDefaultButton(skipBtn);
+        box.exec();
+        QAbstractButton *clicked = box.clickedButton();
+        if (clicked == replaceAllBtn) {
+          replaceAll = true;
+        } else if (clicked == skipBtn) {
+          continue;
+        } else if (clicked == skipAllBtn) {
+          skipAll = true;
+          continue;
+        } else if (clicked == cancelBtn) {
+          cancelled = true;
+          break;
+        }
+      } else if (QFileInfo::exists(destFile) && skipAll) {
+        continue;
+      }
+      QDir().mkpath(dfi.absolutePath());
+      if (QFileInfo::exists(destFile)) QFile::remove(destFile);
+      QFile::copy(it.value(), destFile);
+      extracted++;
     }
   }
-  for (auto it = diskSources.begin(); it != diskSources.end(); ++it) {
-    QString destFile = dir + "/" + it.key();
-    QFileInfo dfi(destFile);
-    QDir().mkpath(dfi.absolutePath());
-    QFile::copy(it.value(), destFile);
-    extracted++;
-  }
+
+#ifdef Q_OS_MACOS
+  ArchiveManager::fixupMacOSApps(dir);
+#endif
 
   m_progressBar->setVisible(false);
   m_toolbar->setEnabled(true);
   menuBar()->setEnabled(true);
-  ui->statusBar->showMessage(tr("Extracted %1 of %2 selected item(s) to: %3").arg(extracted).arg(selectedPaths.size()).arg(dir));
+  if (cancelled)
+    ui->statusBar->showMessage(tr("Extraction cancelled"));
+  else
+    ui->statusBar->showMessage(tr("Extracted %1 of %2 selected item(s) to: %3").arg(extracted).arg(selectedPaths.size()).arg(dir));
 }
 
 void MainWindow::testIntegrity() {

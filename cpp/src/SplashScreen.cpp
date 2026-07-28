@@ -61,7 +61,9 @@ SplashScreen::SplashScreen(QWidget *parent) : QDialog(parent) {
   m_timer.start(20000);
 
   adjustSize();
-  setFixedSize(sizeHint());
+  QSize s = sizeHint();
+  s.setWidth(static_cast<int>(s.width() * 1.2));
+  setFixedSize(s);
 }
 
 void SplashScreen::paintEvent(QPaintEvent *) {
