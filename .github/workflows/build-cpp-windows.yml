@@ -93,7 +93,7 @@ jobs:
 
       - name: Deploy Qt dependencies
         if: matrix.arch == 'x64'
-        run: windeployqt build/Release/ArchiveSphynx.exe
+        run: windeployqt build/ArchiveSphynx.exe
         shell: cmd
 
       - name: Deploy Qt dependencies (ARM64)
@@ -101,11 +101,26 @@ jobs:
         run: |
           # windeployqt from cross-compiled Qt can't run on x64, copy DLLs manually
           $qtRoot = "$env:QT_ROOT_DIR"
-          Copy-Item "$qtRoot/bin/Qt6Core.dll" build/Release/
-          Copy-Item "$qtRoot/bin/Qt6Gui.dll" build/Release/
-          Copy-Item "$qtRoot/bin/Qt6Widgets.dll" build/Release/
-          Copy-Item "$qtRoot/plugins/platforms" build/Release/platforms -Recurse
-          Copy-Item "$qtRoot/plugins/styles" build/Release/styles -Recurse -ErrorAction SilentlyContinue
+          Copy-Item "$qtRoot/bin/Qt6Core.dll" build/
+          Copy-Item "$qtRoot/bin/Qt6Gui.dll" build/
+          Copy-Item "$qtRoot/bin/Qt6Widgets.dll" build/
+          Copy-Item "$qtRoot/plugins/platforms" build/platforms -Recurse
+          Copy-Item "$qtRoot/plugins/styles" build/styles -Recurse -ErrorAction SilentlyContinue
+        shell: powershell
+
+      - name: Stage build artifacts
+        run: |
+          New-Item -ItemType Directory -Path staging -Force
+          # Copy the executable
+          Copy-Item build/ArchiveSphynx.exe staging/
+          # Copy all DLLs and plugins deployed by windeployqt or manually
+          Get-ChildItem build -Filter *.dll | Copy-Item -Destination staging/
+          if (Test-Path build/platforms) { Copy-Item build/platforms staging/platforms -Recurse }
+          if (Test-Path build/styles) { Copy-Item build/styles staging/styles -Recurse }
+          if (Test-Path build/imageformats) { Copy-Item build/imageformats staging/imageformats -Recurse }
+          if (Test-Path build/iconengines) { Copy-Item build/iconengines staging/iconengines -Recurse }
+          if (Test-Path build/tls) { Copy-Item build/tls staging/tls -Recurse }
+          if (Test-Path build/translations) { Copy-Item build/translations staging/translations -Recurse }
         shell: powershell
 
       - name: Install NSIS
@@ -118,11 +133,11 @@ jobs:
         run: |
           $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
           $redistDir = Get-ChildItem "$vsPath\VC\Redist\MSVC\*\${{ matrix.arch == 'arm64' && 'arm64' || 'x64' }}\Microsoft.VC*.CRT" -Directory | Select-Object -Last 1
-          Copy-Item "$redistDir\vcruntime140.dll" build/Release/
-          Copy-Item "$redistDir\vcruntime140_1.dll" build/Release/ -ErrorAction SilentlyContinue
-          Copy-Item "$redistDir\msvcp140.dll" build/Release/
-          Copy-Item "$redistDir\msvcp140_1.dll" build/Release/ -ErrorAction SilentlyContinue
-          Copy-Item "$redistDir\msvcp140_2.dll" build/Release/ -ErrorAction SilentlyContinue
+          Copy-Item "$redistDir\vcruntime140.dll" staging/
+          Copy-Item "$redistDir\vcruntime140_1.dll" staging/ -ErrorAction SilentlyContinue
+          Copy-Item "$redistDir\msvcp140.dll" staging/
+          Copy-Item "$redistDir\msvcp140_1.dll" staging/ -ErrorAction SilentlyContinue
+          Copy-Item "$redistDir\msvcp140_2.dll" staging/ -ErrorAction SilentlyContinue
         shell: powershell
 
       - name: Create installer with NSIS
@@ -142,7 +157,7 @@ jobs:
 
           Section
             SetOutPath "`$INSTDIR"
-            File /r "build\Release\*.*"
+            File /r "staging\*.*"
             CreateShortcut "`$DESKTOP\ArchiveSphynx.lnk" "`$INSTDIR\ArchiveSphynx.exe"
             CreateDirectory "`$SMPROGRAMS\ArchiveSphynx"
             CreateShortcut "`$SMPROGRAMS\ArchiveSphynx\ArchiveSphynx.lnk" "`$INSTDIR\ArchiveSphynx.exe"
