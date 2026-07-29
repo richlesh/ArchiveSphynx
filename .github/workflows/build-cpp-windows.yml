@@ -78,9 +78,12 @@ jobs:
             exit 1
           }
 
-          # Resolve Qt prefix path
+          # Resolve Qt prefix path (use forward slashes to avoid CMake escape issues)
           $qtPrefix = if ($env:Qt6_DIR) { "$env:Qt6_DIR/.." } else { "$env:QT_ROOT_DIR" }
+          $qtPrefix = $qtPrefix -replace '\\', '/'
           Write-Host "Using Qt at: $qtPrefix"
+
+          $vcpkgToolchain = "$vcpkgRoot/scripts/buildsystems/vcpkg.cmake" -replace '\\', '/'
 
           $cmakeArgs = @(
             "-S", "cpp",
@@ -90,14 +93,15 @@ jobs:
             "-DCMAKE_C_COMPILER=cl",
             "-DCMAKE_CXX_COMPILER=cl",
             "-DCMAKE_PREFIX_PATH=$qtPrefix",
-            "-DCMAKE_TOOLCHAIN_FILE=$vcpkgRoot/scripts/buildsystems/vcpkg.cmake",
+            "-DCMAKE_TOOLCHAIN_FILE=$vcpkgToolchain",
             "-DVCPKG_TARGET_TRIPLET=${{ matrix.arch == 'arm64' && 'arm64-windows' || 'x64-windows' }}"
           )
 
           # For ARM64 cross-compilation, set the system processor and Qt host path
           if ("${{ matrix.arch }}" -eq "arm64") {
+            $qtHostPath = $env:QT_HOST_PATH -replace '\\', '/'
             $cmakeArgs += "-DCMAKE_SYSTEM_PROCESSOR=ARM64"
-            $cmakeArgs += "-DQT_HOST_PATH=$env:QT_HOST_PATH"
+            $cmakeArgs += "-DQT_HOST_PATH=$qtHostPath"
           }
 
           cmake @cmakeArgs
