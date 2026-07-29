@@ -60,12 +60,21 @@ jobs:
       - name: Configure and Build
         shell: pwsh
         run: |
+          # Resolve vcpkg root - prefer VCPKG_INSTALLATION_ROOT, fall back to C:\vcpkg (GitHub runner default)
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { "C:\vcpkg" }
+          Write-Host "Using vcpkg at: $vcpkgRoot"
+
+          if (-not (Test-Path "$vcpkgRoot/scripts/buildsystems/vcpkg.cmake")) {
+            Write-Error "vcpkg toolchain not found at $vcpkgRoot/scripts/buildsystems/vcpkg.cmake"
+            exit 1
+          }
+
           # Run CMake with Ninja instead of Visual Studio project generator
           cmake -S cpp -B build `
             -G "Ninja" `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_PREFIX_PATH="${{ env.Qt6_DIR }}/.." `
-            -DCMAKE_TOOLCHAIN_FILE="${{ env.VCPKG_INSTALLATION_ROOT }}/scripts/buildsystems/vcpkg.cmake" `
+            -DCMAKE_TOOLCHAIN_FILE="$vcpkgRoot/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET="${{ matrix.arch == 'arm64' && 'arm64-windows' || 'x64-windows' }}"
 
           # Build the project
