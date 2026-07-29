@@ -64,7 +64,7 @@ jobs:
       - name: Setup MSVC Developer Environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: ${{ matrix.arch }}
+          arch: ${{ matrix.arch == 'arm64' && 'amd64_arm64' || 'x64' }}
 
       - name: Configure and Build
         shell: pwsh
@@ -78,15 +78,29 @@ jobs:
             exit 1
           }
 
-          # Run CMake with Ninja instead of Visual Studio project generator
-          cmake -S cpp -B build `
-            -G "Ninja" `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_C_COMPILER=cl `
-            -DCMAKE_CXX_COMPILER=cl `
-            -DCMAKE_PREFIX_PATH="${{ env.Qt6_DIR }}/.." `
-            -DCMAKE_TOOLCHAIN_FILE="$vcpkgRoot/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET="${{ matrix.arch == 'arm64' && 'arm64-windows' || 'x64-windows' }}"
+          # Resolve Qt prefix path
+          $qtPrefix = if ($env:Qt6_DIR) { "$env:Qt6_DIR/.." } else { "$env:QT_ROOT_DIR" }
+          Write-Host "Using Qt at: $qtPrefix"
+
+          $cmakeArgs = @(
+            "-S", "cpp",
+            "-B", "build",
+            "-G", "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_C_COMPILER=cl",
+            "-DCMAKE_CXX_COMPILER=cl",
+            "-DCMAKE_PREFIX_PATH=$qtPrefix",
+            "-DCMAKE_TOOLCHAIN_FILE=$vcpkgRoot/scripts/buildsystems/vcpkg.cmake",
+            "-DVCPKG_TARGET_TRIPLET=${{ matrix.arch == 'arm64' && 'arm64-windows' || 'x64-windows' }}"
+          )
+
+          # For ARM64 cross-compilation, set the system processor and Qt host path
+          if ("${{ matrix.arch }}" -eq "arm64") {
+            $cmakeArgs += "-DCMAKE_SYSTEM_PROCESSOR=ARM64"
+            $cmakeArgs += "-DQT_HOST_PATH=$env:QT_HOST_PATH"
+          }
+
+          cmake @cmakeArgs
 
           # Build the project
           cmake --build build --config Release
