@@ -8,12 +8,19 @@
   <widget class="QWidget" name="centralWidget">
    <layout class="QVBoxLayout" name="mainLayout">
     <item>
-     <widget class="QTreeView" name="archiveTree"/>
+     <widget class="ArchiveTreeView" name="archiveTree"/>
     </item>
    </layout>
   </widget>
   <widget class="QStatusBar" name="statusBar"/>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>ArchiveTreeView</class>
+   <extends>QTreeView</extends>
+   <header>ArchiveTreeView.h</header>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections/>
 </ui>
