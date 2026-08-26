@@ -22,27 +22,37 @@ ArchiveManager::ArchiveManager(QObject *parent) : QObject(parent) {}
 bool ArchiveManager::open(const QString &filePath) {
   close();
 
+  QFileInfo fi(filePath);
+  QString ext = fi.suffix().toLower();
+
+  // For standalone compressed file extensions, check if there's an archive inside.
+  // If not, handle as raw compressed.
+  bool isCompressedExt = (ext == "xz" || ext == "gz" || ext == "bz2" || ext == "zst" || ext == "lz4" || ext == "lzma");
+
   struct archive *a = archive_read_new();
   archive_read_support_filter_all(a);
   archive_read_support_format_all(a);
   archive_read_set_format_option(a, "zip", "mac-ext", NULL);
 
   if (archive_read_open_filename(a, filePath.toUtf8().constData(), 10240) != ARCHIVE_OK) {
-    emit errorOccurred(QString::fromUtf8(archive_error_string(a)));
     archive_read_free(a);
+    // If it's a compressed extension, try as raw
+    if (isCompressedExt)
+      return openRawCompressed(filePath);
+    emit errorOccurred(QString::fromUtf8(archive_error_string(a)));
     return false;
   }
 
   m_currentFile = filePath;
-  QFileInfo fi(filePath);
-  QString ext = fi.suffix().toLower();
   m_readOnly = (ext == "rar" || ext == "deb" || ext == "rpm" || ext == "dmg" || ext == "iso");
 
   bool isZipLike = (ext == "zip" || ext == "7z" || ext == "jar");
 
   struct archive_entry *entry;
   int readCount = 0;
+  bool gotHeader = false;
   while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
+    gotHeader = true;
     if (++readCount % 50 == 0) emit progressChanged(-1);
     ArchiveEntry e;
     e.path = QString::fromUtf8(archive_entry_pathname(entry));
@@ -82,6 +92,59 @@ bool ArchiveManager::open(const QString &filePath) {
   }
 
   archive_read_free(a);
+
+  // If no headers were found and it's a compressed extension, try as raw compressed
+  if (!gotHeader && isCompressedExt) {
+    return openRawCompressed(filePath);
+  }
+
+  emit archiveOpened(filePath);
+  return true;
+}
+
+bool ArchiveManager::openRawCompressed(const QString &filePath) {
+  // Reset state since open() may have partially initialized
+  m_entries.clear();
+  m_currentFile.clear();
+  m_readOnly = false;
+
+  struct archive *a = archive_read_new();
+  archive_read_support_filter_all(a);
+  archive_read_support_format_raw(a);
+
+  if (archive_read_open_filename(a, filePath.toUtf8().constData(), 10240) != ARCHIVE_OK) {
+    emit errorOccurred(QString::fromUtf8(archive_error_string(a)));
+    archive_read_free(a);
+    return false;
+  }
+
+  struct archive_entry *entry;
+  if (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
+    QFileInfo fi(filePath);
+    // Derive the inner filename by stripping the compression extension
+    QString innerName = fi.completeBaseName(); // e.g. "img.xz" -> "img"
+
+    ArchiveEntry e;
+    e.path = innerName;
+    e.size = archive_entry_size_is_set(entry) ? archive_entry_size(entry) : 0;
+    e.compressedSize = fi.size();
+    e.isDirectory = false;
+    e.isSymlink = false;
+    e.modified = fi.lastModified();
+    e.permissions = QStringLiteral("644");
+    e.compressionMethod = QString::fromUtf8(archive_filter_name(a, 0));
+    m_entries.append(e);
+  }
+
+  archive_read_free(a);
+
+  if (m_entries.isEmpty()) {
+    emit errorOccurred(tr("Failed to read compressed file."));
+    return false;
+  }
+
+  m_currentFile = filePath;
+  m_readOnly = true;
   emit archiveOpened(filePath);
   return true;
 }
@@ -97,21 +160,82 @@ void ArchiveManager::setCurrentFile(const QString &filePath) { m_currentFile = f
 QList<ArchiveEntry> ArchiveManager::entries() const { return m_entries; }
 bool ArchiveManager::isReadOnly() const { return m_readOnly; }
 
+bool ArchiveManager::extractRawCompressed(const QString &destDir, OverwriteCallback overwriteCallback) {
+  QFileInfo fi(m_currentFile);
+  QString innerName = fi.completeBaseName();
+  QString destPath = destDir + "/" + innerName;
+
+  // Check for overwrite conflict
+  if (QFileInfo::exists(destPath) && overwriteCallback) {
+    OverwriteAction action = overwriteCallback(destPath);
+    if (action == OverwriteAction::Skip || action == OverwriteAction::SkipAll)
+      return true;
+    if (action == OverwriteAction::Cancel)
+      return false;
+  }
+
+  struct archive *a = archive_read_new();
+  archive_read_support_filter_all(a);
+  archive_read_support_format_raw(a);
+
+  if (archive_read_open_filename(a, m_currentFile.toUtf8().constData(), 10240) != ARCHIVE_OK) {
+    emit errorOccurred(QString::fromUtf8(archive_error_string(a)));
+    archive_read_free(a);
+    return false;
+  }
+
+  struct archive_entry *entry;
+  if (archive_read_next_header(a, &entry) != ARCHIVE_OK) {
+    emit errorOccurred(tr("Failed to read compressed stream."));
+    archive_read_free(a);
+    return false;
+  }
+
+  QFile outFile(destPath);
+  if (!outFile.open(QIODevice::WriteOnly)) {
+    emit errorOccurred(tr("Cannot write to: %1").arg(destPath));
+    archive_read_free(a);
+    return false;
+  }
+
+  const void *buff;
+  size_t size;
+  la_int64_t offset;
+  while (archive_read_data_block(a, &buff, &size, &offset) == ARCHIVE_OK) {
+    outFile.write(reinterpret_cast<const char *>(buff), size);
+  }
+
+  outFile.close();
+  archive_read_free(a);
+  emit progressChanged(100);
+  return true;
+}
+
 bool ArchiveManager::extractTo(const QString &destDir, OverwriteCallback overwriteCallback) {
   if (m_currentFile.isEmpty()) return false;
+
+  QFileInfo fi(m_currentFile);
+  QString ext = fi.suffix().toLower();
+  bool isRawCompressed = (ext == "xz" || ext == "gz" || ext == "bz2" || ext == "zst" || ext == "lz4" || ext == "lzma")
+    && m_entries.size() == 1 && m_entries[0].path == fi.completeBaseName();
+
+  // For raw compressed files, extract directly without archive_write_disk
+  if (isRawCompressed) {
+    return extractRawCompressed(destDir, overwriteCallback);
+  }
 
   struct archive *a = archive_read_new();
   archive_read_support_filter_all(a);
   archive_read_support_format_all(a);
 
-  struct archive *ext = archive_write_disk_new();
-  archive_write_disk_set_options(ext, ARCHIVE_EXTRACT_TIME | ARCHIVE_EXTRACT_PERM);
-  archive_write_disk_set_standard_lookup(ext);
+  struct archive *ext_disk = archive_write_disk_new();
+  archive_write_disk_set_options(ext_disk, ARCHIVE_EXTRACT_TIME | ARCHIVE_EXTRACT_PERM);
+  archive_write_disk_set_standard_lookup(ext_disk);
 
   if (archive_read_open_filename(a, m_currentFile.toUtf8().constData(), 10240) != ARCHIVE_OK) {
     emit errorOccurred(QString::fromUtf8(archive_error_string(a)));
     archive_read_free(a);
-    archive_write_free(ext);
+    archive_write_free(ext_disk);
     return false;
   }
 
@@ -150,7 +274,7 @@ bool ArchiveManager::extractTo(const QString &destDir, OverwriteCallback overwri
           continue;
         case OverwriteAction::Cancel:
           archive_read_free(a);
-          archive_write_free(ext);
+          archive_write_free(ext_disk);
           return false;
       }
     } else if (exists && !isDir && skipAll) {
@@ -160,16 +284,16 @@ bool ArchiveManager::extractTo(const QString &destDir, OverwriteCallback overwri
       continue;
     }
 
-    if (archive_write_header(ext, entry) != ARCHIVE_OK) continue;
+    if (archive_write_header(ext_disk, entry) != ARCHIVE_OK) continue;
 
     if (archive_entry_size(entry) > 0) {
       const void *buff;
       size_t size;
       la_int64_t offset;
       while (archive_read_data_block(a, &buff, &size, &offset) == ARCHIVE_OK)
-        archive_write_data_block(ext, buff, size, offset);
+        archive_write_data_block(ext_disk, buff, size, offset);
     }
-    archive_write_finish_entry(ext);
+    archive_write_finish_entry(ext_disk);
 
     current++;
     if (total > 0)
@@ -177,7 +301,7 @@ bool ArchiveManager::extractTo(const QString &destDir, OverwriteCallback overwri
   }
 
   archive_read_free(a);
-  archive_write_free(ext);
+  archive_write_free(ext_disk);
 
 #ifdef Q_OS_MACOS
   fixupMacOSApps(destDir);

@@ -59,6 +59,8 @@ signals:
   void errorOccurred(const QString &message);
 
 private:
+  bool openRawCompressed(const QString &filePath);
+  bool extractRawCompressed(const QString &destDir, OverwriteCallback overwriteCallback);
   QString m_currentFile;
   QList<ArchiveEntry> m_entries;
   bool m_readOnly = false;

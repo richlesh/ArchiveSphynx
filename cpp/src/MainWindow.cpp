@@ -3,6 +3,7 @@
 
 #include "MainWindow.h"
 #include "ui_MainWindow.h"
+#include "ArchiveTreeView.h"
 #include "SettingsDialog.h"
 #include "LicenseDialog.h"
 #include "AboutDialog.h"
@@ -20,6 +21,7 @@
 #include <QStandardItemModel>
 #include <QSortFilterProxyModel>
 #include <QSet>
+#include <functional>
 #include <QSortFilterProxyModel>
 #include <QHeaderView>
 #include <QRegularExpression>
@@ -372,16 +374,28 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *event) {
+  if (event->source() && isAncestorOf(qobject_cast<QWidget *>(event->source()))) {
+    event->ignore();
+    return;
+  }
   if (event->mimeData()->hasUrls())
     event->acceptProposedAction();
 }
 
 void MainWindow::dragMoveEvent(QDragMoveEvent *event) {
+  if (event->source() && isAncestorOf(qobject_cast<QWidget *>(event->source()))) {
+    event->ignore();
+    return;
+  }
   if (event->mimeData()->hasUrls())
     event->acceptProposedAction();
 }
 
 void MainWindow::dropEvent(QDropEvent *event) {
+  if (event->source() && isAncestorOf(qobject_cast<QWidget *>(event->source()))) {
+    event->ignore();
+    return;
+  }
   const auto urls = event->mimeData()->urls();
   if (urls.isEmpty()) return;
 
@@ -548,7 +562,7 @@ void MainWindow::newArchive() {
 
 void MainWindow::openArchive() {
   QString file = QFileDialog::getOpenFileName(this, tr("Open Archive"), QString(),
-    tr("Archives (*.zip *.7z *.rar *.jar *.tar *.tar.gz *.tgz *.tar.bz2 *.tbz *.tar.xz *.txz *.tar.zst *.tzst *.deb *.rpm *.dmg *.iso);;All Files (*)"));
+    tr("Archives (*.zip *.7z *.rar *.jar *.tar *.tar.gz *.tgz *.tar.bz2 *.tbz *.tar.xz *.txz *.tar.zst *.tzst *.xz *.gz *.bz2 *.zst *.deb *.rpm *.dmg *.iso);;All Files (*)"));
   if (!file.isEmpty())
     openArchiveFile(file);
 }
@@ -1306,6 +1320,42 @@ void MainWindow::saveArchiveAs() {
 void MainWindow::extractArchive() {
   QString dir = QFileDialog::getExistingDirectory(this, tr("Extract To"));
   if (dir.isEmpty()) return;
+
+  // For raw compressed files, always use the direct extraction path
+  QFileInfo fi(m_archiveManager->currentFile());
+  QString ext = fi.suffix().toLower();
+  bool isRawCompressed = (ext == "xz" || ext == "gz" || ext == "bz2" || ext == "zst" || ext == "lz4" || ext == "lzma")
+    && m_archiveManager->entries().size() == 1 && m_archiveManager->entries()[0].path == fi.completeBaseName();
+
+  if (isRawCompressed) {
+    m_toolbar->setEnabled(false);
+    menuBar()->setEnabled(false);
+    m_progressBar->setVisible(true);
+    auto overwriteCb = [this](const QString &path) -> OverwriteAction {
+      QFileInfo ofi(path);
+      QMessageBox box(this);
+      box.setWindowTitle(tr("Confirm Overwrite"));
+      box.setText(tr("The destination already contains a file named \"%1\".").arg(ofi.fileName()));
+      box.setInformativeText(tr("Do you want to replace it?"));
+      QPushButton *replaceBtn = box.addButton(tr("Replace"), QMessageBox::AcceptRole);
+      box.addButton(tr("Skip"), QMessageBox::RejectRole);
+      QPushButton *cancelBtn = box.addButton(QMessageBox::Cancel);
+      box.setDefaultButton(replaceBtn);
+      box.exec();
+      QAbstractButton *clicked = box.clickedButton();
+      if (clicked == replaceBtn) return OverwriteAction::Replace;
+      if (clicked == cancelBtn) return OverwriteAction::Cancel;
+      return OverwriteAction::Skip;
+    };
+    if (m_archiveManager->extractTo(dir, overwriteCb))
+      ui->statusBar->showMessage(tr("Extracted all to: %1").arg(dir));
+    else
+      ui->statusBar->showMessage(tr("Extraction cancelled"));
+    m_progressBar->setVisible(false);
+    m_toolbar->setEnabled(true);
+    menuBar()->setEnabled(true);
+    return;
+  }
 
   bool hasSelection = ui->archiveTree->selectionModel() &&
                       ui->archiveTree->selectionModel()->hasSelection();

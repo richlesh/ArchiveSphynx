@@ -70,6 +70,25 @@
       <key>LSHandlerRank</key>
       <string>Default</string>
     </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Compressed File</string>
+      <key>CFBundleTypeIconFile</key>
+      <string>doc_icon_tar</string>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>xz</string>
+        <string>gz</string>
+        <string>bz2</string>
+        <string>zst</string>
+        <string>lz4</string>
+        <string>lzma</string>
+      </array>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+    </dict>
   </array>
 </dict>
 </plist>
