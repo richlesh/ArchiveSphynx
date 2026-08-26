@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to upload assets to (e.g. 2.1.0)"
+        description: "Release tag to upload assets to (e.g. 2.2.0)"
         required: true
 
 jobs:
@@ -173,6 +173,15 @@ jobs:
             --issuer "$APPLE_API_ISSUER" \
             --wait
           xcrun stapler staple dist/*.dmg
+
+      - name: Create release if it does not exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view ${{ github.event.inputs.tag }} >/dev/null 2>&1 || \
+            gh release create ${{ github.event.inputs.tag }} \
+              --title "ArchiveSphynx ${{ steps.version.outputs.version }}" \
+              --draft=false
 
       - name: Upload DMG to release
         env:
