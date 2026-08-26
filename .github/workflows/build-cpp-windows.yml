@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to upload assets to (e.g. 2.1.0)"
+        description: "Release tag to upload assets to (e.g. 2.2.0)"
         required: true
 
 jobs:
@@ -211,6 +211,18 @@ jobs:
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
+
+      - name: Create release if it does not exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view ${{ github.event.inputs.tag }} 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create ${{ github.event.inputs.tag }} `
+              --title "ArchiveSphynx ${{ steps.version.outputs.version }}" `
+              --draft=false
+          }
+        shell: powershell
 
       - name: Upload installer to release
         env:
