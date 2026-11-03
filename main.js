@@ -15,7 +15,14 @@ function openExternal(url) {
   }
 }
 
-const appIcon = nativeImage.createFromPath(path.join(__dirname, "app_icon.icns"));
+// Electron's nativeImage cannot read .icns on Windows/Linux, which left the
+// window/taskbar and About-panel icon blank off macOS. Pick a format each
+// platform can actually decode: .ico on Windows, .png on Linux, .icns on macOS.
+const appIconFile =
+  process.platform === "win32" ? "app_icon.ico" :
+  process.platform === "linux" ? "app_icon_256.png" :
+  "app_icon.icns";
+const appIcon = nativeImage.createFromPath(path.join(__dirname, appIconFile));
 
 app.name = "ArchiveSphynx";
 

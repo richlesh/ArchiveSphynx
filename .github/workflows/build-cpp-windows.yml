@@ -165,7 +165,7 @@ jobs:
           @"
           !include "MUI2.nsh"
           Name "ArchiveSphynx ${version}"
-          OutFile "dist\ArchiveSphynx-${version}-${arch}-setup.exe"
+          OutFile "dist\ArchiveSphynx-${version}-${arch}-Setup.exe"
           InstallDir "`$PROGRAMFILES\ArchiveSphynx"
           RequestExecutionLevel admin
 

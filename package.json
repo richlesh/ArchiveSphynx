@@ -135,7 +135,16 @@
       "icon": "app_icon.icns"
     },
     "win": {
+      "icon": "app_icon.ico",
       "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "app_icon.ico",
+      "uninstallerIcon": "app_icon.ico"
     },
     "linux": {
       "icon": "app_icon_256.png",
