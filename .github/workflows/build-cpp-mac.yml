@@ -9,12 +9,22 @@ on:
 
 jobs:
   build-cpp-mac:
-    runs-on: macos-latest
+    # Each architecture builds natively on its own runner — macos-latest is now
+    # Apple Silicon, and Homebrew refuses to install the Intel prefix under
+    # Rosetta there ("only supported on Apple Silicon processors"), so the old
+    # `arch -x86_64` cross-build no longer works. arm64 builds on Apple Silicon;
+    # x64 builds on the Intel image (macos-15-intel, available until Aug 2027).
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
     strategy:
+      fail-fast: false
       matrix:
-        arch: [x64, arm64]
+        include:
+          - arch: arm64
+            runner: macos-14
+          - arch: x64
+            runner: macos-15-intel
 
     steps:
       - name: Checkout
@@ -28,13 +38,9 @@ jobs:
 
       - name: Install Qt6 and libarchive
         run: |
-          if [ "${{ matrix.arch }}" = "x64" ]; then
-            # Install x86_64 Homebrew and libraries for cross-compilation
-            arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-            arch -x86_64 /usr/local/bin/brew install qt@6 libarchive cmake ninja
-          else
-            brew install qt@6 libarchive cmake ninja
-          fi
+          # Native Homebrew on each runner (Intel prefix /usr/local on
+          # macos-15-intel, /opt/homebrew on Apple Silicon). No Rosetta.
+          brew install qt@6 libarchive cmake ninja
 
       - name: Import Developer ID certificate
         id: cert
@@ -69,13 +75,10 @@ jobs:
 
       - name: Configure and build
         run: |
-          if [ "${{ matrix.arch }}" = "x64" ]; then
-            QT_PREFIX="/usr/local/opt/qt@6"
-            ARCHIVE_PREFIX="/usr/local/opt/libarchive"
-          else
-            QT_PREFIX="$(brew --prefix qt@6)"
-            ARCHIVE_PREFIX="$(brew --prefix libarchive)"
-          fi
+          # Native Homebrew prefix on each runner resolves correctly for both
+          # /usr/local (Intel) and /opt/homebrew (Apple Silicon).
+          QT_PREFIX="$(brew --prefix qt@6)"
+          ARCHIVE_PREFIX="$(brew --prefix libarchive)"
           CMAKE_ARCH=${{ matrix.arch == 'arm64' && 'arm64' || 'x86_64' }}
           cmake -S cpp -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
@@ -88,11 +91,7 @@ jobs:
           APPLE_TEAM_ID: MMZ3Y97NTP
           IDENTITY: ${{ steps.cert.outputs.hash }}
         run: |
-          if [ "${{ matrix.arch }}" = "x64" ]; then
-            MACDEPLOYQT="/usr/local/opt/qt@6/bin/macdeployqt"
-          else
-            MACDEPLOYQT="$(brew --prefix qt@6)/bin/macdeployqt"
-          fi
+          MACDEPLOYQT="$(brew --prefix qt@6)/bin/macdeployqt"
           ARCH=${{ matrix.arch }}
           VERSION=${{ steps.version.outputs.version }}
 
