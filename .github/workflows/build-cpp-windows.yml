@@ -169,23 +169,37 @@ jobs:
           InstallDir "`$PROGRAMFILES\ArchiveSphynx"
           RequestExecutionLevel admin
 
+          ; Installer + uninstaller icons (shown on Setup.exe and the MUI pages).
+          !define MUI_ICON "cpp\resources\icons\app_icon.ico"
+          !define MUI_UNICON "cpp\resources\icons\app_icon.ico"
+
           !insertmacro MUI_PAGE_DIRECTORY
           !insertmacro MUI_PAGE_INSTFILES
+          !insertmacro MUI_UNPAGE_CONFIRM
+          !insertmacro MUI_UNPAGE_INSTFILES
           !insertmacro MUI_LANGUAGE "English"
 
           Section
             SetOutPath "`$INSTDIR"
             File /r "staging\*.*"
+            ; Install the app icon so the Add/Remove Programs entry has one.
+            File "cpp\resources\icons\app_icon.ico"
             CreateShortcut "`$DESKTOP\ArchiveSphynx.lnk" "`$INSTDIR\ArchiveSphynx.exe"
             CreateDirectory "`$SMPROGRAMS\ArchiveSphynx"
             CreateShortcut "`$SMPROGRAMS\ArchiveSphynx\ArchiveSphynx.lnk" "`$INSTDIR\ArchiveSphynx.exe"
             WriteUninstaller "`$INSTDIR\uninstall.exe"
+            ; Add/Remove Programs metadata, including the DisplayIcon.
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ArchiveSphynx" "DisplayName" "ArchiveSphynx"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ArchiveSphynx" "DisplayVersion" "${version}"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ArchiveSphynx" "DisplayIcon" "`$INSTDIR\app_icon.ico"
+            WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ArchiveSphynx" "UninstallString" "`$INSTDIR\uninstall.exe"
           SectionEnd
 
           Section "Uninstall"
             RMDir /r "`$INSTDIR"
             Delete "`$DESKTOP\ArchiveSphynx.lnk"
             RMDir /r "`$SMPROGRAMS\ArchiveSphynx"
+            DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ArchiveSphynx"
           SectionEnd
           "@ | Set-Content installer.nsi
 
